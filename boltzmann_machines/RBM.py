@@ -4,6 +4,9 @@ import torch
 from tqdm import tqdm
 
 
+### test
+
+
 class RBM(object):
 
     def __init__(self, data, N_H=10, device=None):
