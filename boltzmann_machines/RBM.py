@@ -1,4 +1,4 @@
-'Scipt for the RTM'
+'Scipt for the RBM'
 
 import torch
 from tqdm import tqdm
