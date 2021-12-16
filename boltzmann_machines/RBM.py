@@ -3,7 +3,7 @@
 import torch
 from tqdm import tqdm
 
-
+x=1
 class RBM(object):
 
     def __init__(self, data, N_H=10, device=None):
