@@ -186,7 +186,6 @@ def resample(data, sr, mode=1):
 
     N_V, T, n_batches = data.shape
     data = np.array(data)
-    sr = 10  # sampling rate
 
     # make sure that the modulus(T/sr) = 0
     if T % sr != 0:
@@ -198,7 +197,7 @@ def resample(data, sr, mode=1):
         if mode == 1:
             data_nsr[:, t, :] = np.mean(data[:, t:t + 1, :], axis=1)
         elif mode == 2:
-            data_nsr[:, t, :] = data[:, int(s*t), :]
+            data_nsr[:, t, :] = data[:, sr*t, :]
 
     if mode == 1:
         data_nsr.ravel()[data_nsr.ravel() >= 0.5] = 1
