@@ -187,7 +187,7 @@ def resample(data, sr, mode=1):
     N_V, T, n_batches = data.shape
     data = np.array(data)
     sr = 10  # sampling rate
-    mode = 1
+
     # make sure that the modulus(T/sr) = 0
     if T % sr != 0:
         data = data[:, :int(T / sr), :]
