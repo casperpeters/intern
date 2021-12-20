@@ -261,19 +261,3 @@ def cross_correlation(data):
                 C[i][j] = np.correlate(population_vector_t[i], population_vector_tm[j])
     return C
 
-def reshape(data, T=None, n_batches=None):
-    if n_batches == None:
-        N, T, num_samples = data.shape
-        data1 = torch.zeros(N, T * num_samples)
-        for i in range(num_samples):
-            data1[:, T * i:T * (i + 1)] = data[:, :, i]
-
-    elif n_batches and T is not None:
-        N, _ = data.shape
-        data1 = torch.zeros(N, T, n_batches)
-        for i in range(n_batches):
-            data1[:, :, i] = data[:, T * i:T * (i + 1)]
-    else:
-        raise 'Specify n_batches and T'
-
-    return data1
