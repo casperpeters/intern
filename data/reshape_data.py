@@ -158,3 +158,29 @@ def reshape_list_of_tensors(list_of_tensors):
         reshaped_list_of_tensors.append(tensor.reshape(tensor.shape[0], tensor.shape[1]*tensor.shape[2]))
     return reshaped_list_of_tensors
 
+
+def resample(data, sr, mode=1):
+    '''This function can only downsample the original data by a factor sampling rate (sr)
+        and returns the new sample rate (nsr) data
+    '''
+    N_V, T, n_batches = data.shape
+    data = np.array(data)
+    sr = 10  # sampling rate
+    mode = 1
+    # make sure that the modulus(T/sr) = 0
+    if T % sr != 0:
+        data = data[:, :int(T / sr), :]
+    s = int(T / sr)
+    data_nsr = np.zeros([N_V, s, n_batches])
+
+    for t in range(s):
+        if mode == 1:
+            data_nsr[:, t, :] = np.mean(data[:, t:t + 1, :], axis=1)
+        elif mode == 2:
+            data_nsr[:, t, :] = data[:, t, :]
+
+    if mode == 1:
+        data_nsr.ravel()[data_nsr.ravel() >= 0.5] = 1
+        data_nsr.ravel()[data_nsr.ravel() < 0.5] = 0
+
+    return torch.tensor(data_nsr, dtype=torch.float)
