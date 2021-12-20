@@ -178,9 +178,9 @@ for i, t in enumerate(tqdm((T_step[:-1]))):
         nn[n] += dndt * dt
 
         if i % resolution_window == 0 and i != 0:
-            if n==0:
-                si+=1
-            spikes_res[n ,si] = 1.0 * (np.sum( V[n ,i - resolution_window:i] > V_thres ) > 0)
+            if n == 0:
+                si += 1
+            spikes_res[n, si] = 1.0 * (np.sum(V[n, i - resolution_window:i] > V_thres) > 0)
 
 
 I_inj = I_inj[:, :-np.max(time_delay)-1]
