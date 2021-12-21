@@ -44,8 +44,15 @@ class RTRBM(object):
 
         if init_biases:
             self.b_V = -torch.log(1 / torch.mean(data.reshape(self.N_V, self.T * self.num_samples), 1) - 1)[None, :]
+            self.b_V[torch.isnan(self.b_V)] = 0.01 * torch.randn(1)
+            self.b_V[self.b_V > 0.1] = 0.1 * torch.rand(1)
+            self.b_V[self.b_V < 0.1] = -0.1 * torch.rand(1)
             mu_H = torch.mean(self.visible_to_expected_hidden(data.reshape(self.N_V, self.T * self.num_samples)), 1)
             self.b_H = -torch.log(1 / mu_H - 1)[None, :]
+            self.b_H[torch.isnan(self.b_H)] = 0.01 * torch.randn(1)
+            self.b_H[self.b_H > 0.1] = 0.1 * torch.rand(1)
+            self.b_H[self.b_H < 0.1] = -0.1 * torch.rand(1)
+
 
         self.params = [self.W, self.W_acc, self.b_H, self.b_V, self.b_init]
 
