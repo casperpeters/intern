@@ -73,7 +73,7 @@ class RTRBM(object):
         if lr and lr_end and start_decay is not None:
             r = (lr_end / lr) ** (1 / (max_epochs - start_decay))
 
-        [self.DW, self.DW_acc, self.Db_H, self.Db_V, self.Db_init] = self.initialize_grad_updates()
+        [self.DW, self.DU, self.Db_H, self.Db_V, self.Db_init] = self.initialize_grad_updates()
 
         self.errors = []
 
@@ -234,21 +234,21 @@ class RTRBM(object):
                              3), 2) / CDk
         dW = dW_1 + dW_2
 
-        dW_acc = torch.sum((Dt[:, 2:self.T + 1] * (rt[:, 1:self.T] * (1 - rt[:, 1:self.T])) + rt[:, 1:self.T] - barht[:,
+        dU = torch.sum((Dt[:, 2:self.T + 1] * (rt[:, 1:self.T] * (1 - rt[:, 1:self.T])) + rt[:, 1:self.T] - barht[:,
                                                                                                                 1:self.T]).unsqueeze(
             1).repeat(1, self.N_H, 1) *
                            rt[:, 0:self.T - 1].unsqueeze(0).repeat(self.N_H, 1, 1), 2)
 
         del Dt
 
-        return [dW, dW_acc, db_H, db_V, db_init]
+        return [dW, dU, db_H, db_V, db_init]
 
     def update_grad(self, lr=1e-3, mom=0, wc=0, x=2, sp=None):
 
-        dW, dW_acc, db_H, db_V, db_init = self.dparams
+        dW, dU, db_H, db_V, db_init = self.dparams
 
         self.DW = mom * self.DW + lr * (dW - wc * self.VH)
-        self.DW_acc = mom * self.DW_acc + lr * (dW_acc - wc * self.HH)
+        self.DU = mom * self.DU + lr * (dU - wc * self.HH)
         #self.Db_H = mom * self.Db_H + lr * db_H
         #self.Db_V = mom * self.Db_V + lr * db_V
         #self.Db_init = mom * self.Db_init + lr * db_init
@@ -257,7 +257,7 @@ class RTRBM(object):
             self.DW -= sp * torch.reshape(torch.sum(torch.abs(self.VH), 1).repeat(self.N_V), \
                                      [self.N_H, self.N_V]) ** (x - 1) * torch.sign(self.VH)
 
-        Dparams = [self.DW, self.DW_acc, self.Db_H, self.Db_V, self.Db_init]
+        Dparams = [self.DW, self.DU, self.Db_H, self.Db_V, self.Db_init]
         for i in range(len(self.params)): self.params[i] += Dparams[i]
 
         return
@@ -399,6 +399,6 @@ rt = rtrbm.visible_to_expected_hidden(data1.to('cpu'))
 plot_effective_coupling_VH(rtrbm.W.cpu(), data1.float().cpu(), rt.float().cpu())
 print('sp: {}'.format(torch.sum(torch.abs(rtrbm.W) < 0.1) / (N_H * N_V)) )
 
-print(torch.std(rtrbm.W), torch.std(rtrbm.W_acc), torch.std(rtrbm.b_V), torch.std(rtrbm.b_H), torch.std(rtrbm.b_init))
+print(torch.std(rtrbm.W), torch.std(rtrbm.U), torch.std(rtrbm.b_V), torch.std(rtrbm.b_H), torch.std(rtrbm.b_init))
 
 '''

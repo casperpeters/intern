@@ -36,12 +36,12 @@ class RTRBM_nobias(object):
         self.N_H = N_H
 
         self.W = 0.01 * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
-        self.W_acc = 0.01 * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
+        self.U = 0.01 * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
         self.b_H = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
         self.b_V = torch.zeros(1, self.N_V, dtype=self.dtype, device=self.device)
         self.b_init = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
 
-        self.params = [self.W, self.W_acc, self.b_H, self.b_V, self.b_init]
+        self.params = [self.W, self.U, self.b_H, self.b_V, self.b_init]
 
     def learn(self,
               n_epochs=1000,
@@ -160,7 +160,7 @@ class RTRBM_nobias(object):
         rt = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
         rt[:, 0] = AF(torch.matmul(self.W, vt[:, 0]) + self.b_init)
         for t in range(1, T):
-            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.W_acc, rt[:, t - 1]))
+            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.U, rt[:, t - 1]))
         return rt
 
     def visible_to_hidden(self, vt, r, AF=torch.sigmoid):
@@ -168,7 +168,7 @@ class RTRBM_nobias(object):
         ph_sample = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
         ph_sample[:, 0] = AF(torch.matmul(self.W, vt[:, 0]) + self.b_init)
         ph_sample[:, 1:T] = AF(
-            torch.matmul(self.W, vt[:, 1:T]).T + torch.matmul(self.W_acc, r[:, 0:T - 1]).T + self.b_H).T
+            torch.matmul(self.W, vt[:, 1:T]).T + torch.matmul(self.U, r[:, 0:T - 1]).T + self.b_H).T
         return ph_sample, torch.bernoulli(ph_sample)
 
     def hidden_to_visible(self, h, AF=torch.sigmoid):
@@ -201,7 +201,7 @@ class RTRBM_nobias(object):
 
         Dt = torch.zeros(self.N_H, self.T + 1, dtype=self.dtype, device=self.device)
         for t in range(self.T, -1, 1):
-            Dt[:, t] = torch.matmul(self.W_acc.T, (Dt[:, t + 1] * rt[:, t] * (1 - rt[:, t]) + (rt[:, t] - barht[:, t])))
+            Dt[:, t] = torch.matmul(self.U.T, (Dt[:, t + 1] * rt[:, t] * (1 - rt[:, t]) + (rt[:, t] - barht[:, t])))
 
         db_init = (rt[:, 0] - barht[:, 0]) + Dt[:, 1] * rt[:, 0] * (1 - rt[:, 0])
 
@@ -219,22 +219,22 @@ class RTRBM_nobias(object):
                              3), 2) / CDk
         dW = dW_1 + dW_2
 
-        dW_acc = torch.sum((Dt[:, 2:self.T + 1] * (rt[:, 1:self.T] * (1 - rt[:, 1:self.T])) + rt[:, 1:self.T] - barht[:,
+        dU = torch.sum((Dt[:, 2:self.T + 1] * (rt[:, 1:self.T] * (1 - rt[:, 1:self.T])) + rt[:, 1:self.T] - barht[:,
                                                                                                                 1:self.T]).unsqueeze(
             1).repeat(1, self.N_H, 1) *
                            rt[:, 0:self.T - 1].unsqueeze(0).repeat(self.N_H, 1, 1), 2)
 
         del Dt
 
-        return [dW, dW_acc, db_H, db_V, db_init]
+        return [dW, dU, db_H, db_V, db_init]
 
     def update_grad(self, Dparams, lr=1e-3, mom=0, wc=0, x=2, sp=None):
 
-        dW, dW_acc, db_H, db_V, db_init = self.dparams
-        DW, DW_acc, Db_H, Db_V, Db_init = Dparams
+        dW, dU, db_H, db_V, db_init = self.dparams
+        DW, DU, Db_H, Db_V, Db_init = Dparams
 
         DW = mom * DW + lr * (dW - wc * self.W)
-        DW_acc = mom * DW_acc + lr * (dW_acc - wc * self.W_acc)
+        DU = mom * DU + lr * (dU - wc * self.U)
         #Db_H = mom * Db_H + lr * db_H
         #Db_V = mom * Db_V + lr * db_V
         #Db_init = mom * Db_init + lr * db_init
@@ -243,11 +243,11 @@ class RTRBM_nobias(object):
             DW -= sp * torch.reshape(torch.sum(torch.abs(self.W), 1).repeat(self.N_V), \
                                      [self.N_H, self.N_V]) ** (x - 1) * torch.sign(self.W)
 
-        Dparams = [DW, DW_acc, Db_H, Db_V, Db_init]
+        Dparams = [DW, DU, Db_H, Db_V, Db_init]
 
         for i in range(len(self.params)): self.params[i] += Dparams[i]
 
-        return [DW, DW_acc, Db_H, Db_V, Db_init]
+        return [DW, DU, Db_H, Db_V, Db_init]
 
     def infer(self,
               data,
@@ -268,19 +268,19 @@ class RTRBM_nobias(object):
 
         rt[:, 0] = AF(torch.matmul(self.W, vt[:, 0]) + self.b_init)
         for t in range(1, t1):
-            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.W_acc, rt[:, t - 1]))
+            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.U, rt[:, t - 1]))
 
         for t in tqdm(range(t1, T + t_extra), disable=disable_tqdm):
             v = vt[:, t - 1]
 
             for kk in range(pre_gibbs_k):
-                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.W_acc, rt[:, t - 1]))).T
+                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.U, rt[:, t - 1]))).T
                 v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_V.T))
 
             vt_k = torch.zeros(N_V, gibbs_k, dtype=self.dtype, device=self.device)
             ht_k = torch.zeros(N_H, gibbs_k, dtype=self.dtype, device=self.device)
             for kk in range(gibbs_k):
-                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.W_acc, rt[:, t - 1]))).T
+                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.U, rt[:, t - 1]))).T
                 v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_V.T))
                 vt_k[:, kk] = v.T
                 ht_k[:, kk] = h.T
@@ -291,11 +291,11 @@ class RTRBM_nobias(object):
                 vt[:, t] = torch.mean(vt_k, 1)
             if mode == 3:
                 E = torch.sum(ht_k * (torch.matmul(self.W, vt_k)), 0) + torch.matmul(self.b_V, vt_k) + torch.matmul(
-                    self.b_H, ht_k) + torch.matmul(torch.matmul(self.W_acc, rt[:, t - 1]).T, ht_k)
+                    self.b_H, ht_k) + torch.matmul(torch.matmul(self.U, rt[:, t - 1]).T, ht_k)
                 idx = torch.argmax(E)
                 vt[:, t] = vt_k[:, idx]
 
-            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.W_acc, rt[:, t - 1]))
+            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.U, rt[:, t - 1]))
 
         return vt, rt
 
@@ -318,13 +318,13 @@ class RTRBM_nobias(object):
 
             # it is important to keep the burn-in inside the chain loop, because we now have time-dependency
             for kk in range(pre_gibbs_k):
-                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.W_acc, rt[:, t - 1]))).T
+                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.U, rt[:, t - 1]))).T
                 v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_V.T))
 
             vt_k = torch.zeros(self.N_V, gibbs_k, dtype=self.dtype, device=self.device)
             ht_k = torch.zeros(self.N_H, gibbs_k, dtype=self.dtype, device=self.device)
             for kk in range(gibbs_k):
-                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.W_acc, rt[:, t - 1]))).T
+                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.U, rt[:, t - 1]))).T
                 v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_V.T))
                 vt_k[:, kk] = v.T
                 ht_k[:, kk] = h.T
@@ -335,10 +335,10 @@ class RTRBM_nobias(object):
                 vt[:, t] = torch.mean(vt_k, 1)
             if mode == 3:
                 E = torch.sum(ht_k * (torch.matmul(self.W, vt_k)), 0) + torch.matmul(self.b_V, vt_k) + torch.matmul(
-                    self.b_H, ht_k) + torch.matmul(torch.matmul(self.W_acc, rt[:, t - 1]).T, ht_k)
+                    self.b_H, ht_k) + torch.matmul(torch.matmul(self.U, rt[:, t - 1]).T, ht_k)
                 idx = torch.argmax(E)
                 vt[:, t] = vt_k[:, idx]
 
-            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.W_acc, rt[:, t - 1]))
+            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.U, rt[:, t - 1]))
 
         return vt, rt
