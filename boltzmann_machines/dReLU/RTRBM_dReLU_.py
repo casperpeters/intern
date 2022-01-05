@@ -161,8 +161,8 @@ class RTRBM(object):
                         p_plus[i] = 1
                     else:
                         p_plus[i] = 0
-            p_plus[p_plus>=1] = 1
-            p_plus[p_plus<=0] = 0
+            p_plus[p_plus > 1] = 1
+            p_plus[p_plus < 0] = 0
 
             p_min = 1 - p_plus
             rt[:, t] = p_plus * ((I - tp - IU) / gp + 1 / (torch.sqrt(gp) * phi_plus)) + \
