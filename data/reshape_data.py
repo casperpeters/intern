@@ -195,7 +195,7 @@ def resample(data, sr, mode=1):
 
     for t in range(s):
         if mode == 1:
-            data_nsr[:, t, :] = np.mean(data[:, t:t + 1, :], axis=1)
+            data_nsr[:, t, :] = np.mean(data[:, sr*t:sr*(t + 1), :], axis=1)
         elif mode == 2:
             data_nsr[:, t, :] = data[:, sr*t, :]
 
