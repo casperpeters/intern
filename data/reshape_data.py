@@ -200,7 +200,8 @@ def resample(data, sr, mode=1):
             data_nsr[:, t, :] = data[:, sr*t, :]
 
     if mode == 1:
-        data_nsr.ravel()[data_nsr.ravel() >= 0.5] = 1
-        data_nsr.ravel()[data_nsr.ravel() < 0.5] = 0
+        data_nsr.ravel()[data_nsr.ravel() > 0.5] = 1.0
+        data_nsr.ravel()[data_nsr.ravel() < 0.5] = 0.0
+        data_nsr.ravel()[data_nsr.ravel() == 0.5] = 1.0 * (np.random.rand(np.sum(data_nsr.ravel() == 0.5)) > 0.5)
 
     return torch.tensor(data_nsr, dtype=torch.float)

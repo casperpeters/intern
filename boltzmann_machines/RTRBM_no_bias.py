@@ -49,6 +49,7 @@ class RTRBM_nobias(object):
               CDk=10, PCD=False,
               lr=1e-3, lr_end=None, start_decay=None,
               sp=None, x=2,
+              Dparams = None,
               mom=0.9,
               wc=0.0002,
               AF=torch.sigmoid,
@@ -66,9 +67,10 @@ class RTRBM_nobias(object):
         if lr and lr_end and start_decay is not None:
             r = (lr_end / lr) ** (1 / (n_epochs - start_decay))
 
-        Dparams = self.initialize_grad_updates()
+        if Dparams == None:
+            Dparams = self.initialize_grad_updates()
 
-        self.errors = torch.zeros(n_epochs, 1)
+        self.errors = torch.zeros(n_epochs)
         self.disable = disable_tqdm
         for epoch in tqdm(range(0, n_epochs), disable=self.disable):
             err = 0
@@ -119,6 +121,8 @@ class RTRBM_nobias(object):
             if lr and lr_end and start_decay is not None:
                 if start_decay <= epoch:
                     lr *= r
+
+        self.Dparams = Dparams
 
     def CD(self, vt, rt, CDk, AF=torch.sigmoid):
 
