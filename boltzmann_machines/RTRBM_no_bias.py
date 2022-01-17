@@ -197,7 +197,7 @@ class RTRBM_nobias(object):
             :param barht: The mean activations of the hidden layer
             :param barvt: The mean activations of the visible layer
             :param CDk: The number of Gibbs sampling steps used to compute the negative phase in CD-k
-            :return: A list containing the gradient of the parameters of the RBM """
+            :return: A list containing the gradient of the parameters of the RTRBM """
 
         Dt = torch.zeros(self.N_H, self.T + 1, dtype=self.dtype, device=self.device)
         for t in range(self.T, -1, 1):
@@ -219,10 +219,9 @@ class RTRBM_nobias(object):
                              3), 2) / CDk
         dW = dW_1 + dW_2
 
-        dU = torch.sum((Dt[:, 2:self.T + 1] * (rt[:, 1:self.T] * (1 - rt[:, 1:self.T])) + rt[:, 1:self.T] - barht[:,
-                                                                                                                1:self.T]).unsqueeze(
-            1).repeat(1, self.N_H, 1) *
-                           rt[:, 0:self.T - 1].unsqueeze(0).repeat(self.N_H, 1, 1), 2)
+        dU = torch.sum((Dt[:, 2:self.T + 1] * (rt[:, 1:self.T] * (1 - rt[:, 1:self.T])) +
+                        rt[:, 1:self.T] - barht[:, 1:self.T]).unsqueeze(1).repeat(1, self.N_H, 1)
+                       * rt[:, 0:self.T - 1].unsqueeze(0).repeat(self.N_H, 1, 1), 2)
 
         del Dt
 
