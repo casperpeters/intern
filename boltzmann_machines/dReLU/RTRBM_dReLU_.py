@@ -1,4 +1,4 @@
-'scipt for the RTRBM'
+'scipt for the RTRBM with dReLU hidden unit potential'
 
 import torch
 from tqdm import tqdm
@@ -570,7 +570,7 @@ class RTRBM(object):
 
         return [DW, DU, Db_V, Db_init, Dtheta_p, Dtheta_m, Dgamma_p, Dgamma_m]
 
-    def constraint(self, threshold = 1e-2):
+    def constraint(self, threshold=1e-2):
         for p in [self.gamma_p, self.gamma_m]:
             idx = p < threshold
             p[idx] = threshold

@@ -94,17 +94,17 @@ class RTRBM(object):
                n_epochs : int
                           Number of epochs for training
               batchsize : int
-                          Computes the mean gradient of batchsize before updating the RTRBM
+                          The number of batchsizes used for computing the mean gradient before updating the RTRBM
                     CDk : int
                           The number of Gibbs sampling steps used to compute the negative phase in CD-k
                    PCD  : int
-                          Persistent contrastive divergence (not working, somewhere is probabily a bug)
+                          Persistent contrastive divergence (not working, most likely a bug)
                      lr : float
                           Learning rate of gradient decent
                  lr_end : float
                           iff None -> no learning rate decay
                           Geometrically decay of learning to an end value lr_end at epoch n_epochs
-            start_decay : torch.Tensor
+            start_decay : float
                           Start decay at epoch number start_decay
                      sp : float
                           Sparse penalty on the visible to hidden weight
@@ -197,7 +197,7 @@ class RTRBM(object):
 
     def CD(self, vt, rt, CDk, AF=torch.sigmoid):
 
-        """     Performs the constrastive divergence step.
+        """     Performs the contrastive divergence step.
 
             Parameters
             ----------
@@ -445,7 +445,7 @@ class RTRBM(object):
                           The activation function.
                  chain  : int
                           Number of Monte Carlo chains
-             pre_gibs_k : int
+             pre_gibbs_k : int
                           Burn in contrastive divergence
                 gibbs_k : int
                           Number of contrastive divergence steps before computing the next

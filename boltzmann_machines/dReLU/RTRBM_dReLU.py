@@ -1,4 +1,4 @@
-'scipt for the RTRBM'
+'scipt for the RTRBM with dReLU hidden unit potential'
 
 import torch
 from tqdm import tqdm

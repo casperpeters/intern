@@ -582,17 +582,17 @@ def optimal_cluster_plot(X, n_clusters=10):
     plt.show()
 
 
-def plot_spikes_grouped_by_HU(VH, V, H):
+def plot_spikes_grouped_by_HU(VH, v, r, fontsize=12):
     # VH.shape = [H, V]
 
     colors_list = list(colors._colors_full_map.values())
-    N_V, T = V.shape
-    N_H = H.shape[0]
+    N_V, T = v.shape
+    N_H = r.shape[0]
     stongest_connecting_HU = torch.zeros(N_V)
 
     for i in range(N_V):
         # returns the index of the strongest connecting HU per visible, according to VH
-        stongest_connecting_HU[i] = torch.argmax(torch.abs(VH[:,i]))
+        stongest_connecting_HU[i] = torch.argmax(torch.abs(VH[:, i]))
 
     # sort visibles to their strongest connection HU
     idx = torch.argsort(stongest_connecting_HU)
@@ -601,25 +601,20 @@ def plot_spikes_grouped_by_HU(VH, V, H):
         # determine how many visibles are connected to hidden i
         num[i+1] = num[i] + torch.count_nonzero(stongest_connecting_HU == i)
 
-    fig, ax = plt.subplots(3,1, figsize=(12,24))
+    fig, ax = plt.subplots(1, 2, figsize=(12,24))
 
-    sns.heatmap(VH.T, ax=ax[0])
-    ax[0].set_xlabel('Visible', fontsize=28)
-    ax[0].set_ylabel('Hidden', fontsize=28)
-    ax[0].tick_params(axis='both', which='major', labelsize=20)
-
-    sns.heatmap(V[idx,:], ax = ax[1], cbar=False)
-    ax[1].set_xlabel('Time', fontsize=28)
-    ax[1].set_ylabel('Sorted visible per strongest connecting hidden', fontsize=28)
-    ax[1].tick_params(axis='both', which='major', labelsize=20)
+    sns.heatmap(v[idx,:], ax = ax[1], cbar=False)
+    ax[0].set_xlabel('Time', fontsize=fontsize)
+    ax[0].set_ylabel('Sorted visible per strongest connecting hidden', fontsize=fontsize)
+    ax[0].tick_params(axis='both', which='major', labelsize=15)
 
     for x, i in enumerate(num):
-        ax[1].hlines(i, 0, T, colors = colors_list[x],linewidth=1)
+        ax[0].hlines(i, 0, T, colors = colors_list[x], linewidth=2)
 
-    sns.heatmap(H, ax = ax[2], cbar=False)
-    ax[2].set_xlabel('Time', fontsize=28)
-    ax[2].set_ylabel('Hidden', fontsize=28)
-    ax[2].tick_params(axis='both', which='major', labelsize=20)
+    sns.heatmap(r, ax = ax[2], cbar=False)
+    ax[1].set_xlabel('Time', fontsize=fontsize)
+    ax[1].set_ylabel('Hidden', fontsize=fontsize)
+    ax[1].tick_params(axis='both', which='major', labelsize=15)
 
     plt.show()
 

@@ -373,7 +373,7 @@ class RBM(object):
         return vt, ht
 
 
-"""
+
 import sys
 sys.path.append(r'D:\RU\OneDrive\Intern\rtrbm_master')
 
@@ -385,17 +385,18 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 N_H = 4
-spikes, coordinates, pop_idx = create_complex_artificial_data(n_neurons=40,
-                                   t_max=250,
-                                   n_populations=4,
-                                   mean_firing_rate=0.2,
-                                   population_correlations=[0.1, 0.6, 0.6, 0.8],
-                                   neuron_population_correlation=[0.6, 0.9, 0.9, 0.9],
-                                   time_shifts=None,
-                                   permute=True
-                                   )
+# spikes, coordinates, pop_idx = create_complex_artificial_data(n_neurons=40,
+#                                    t_max=250,
+#                                    n_populations=4,
+#                                    mean_firing_rate=0.2,
+#                                    population_correlations=[0.1, 0.6, 0.6, 0.8],
+#                                    neuron_population_correlation=[0.6, 0.9, 0.9, 0.9],
+#                                    time_shifts=None,
+#                                    permute=True
+#                                    )
+spikes = create_BB(N_V=16, T=32, n_samples=64, width_vec=[4, 5, 6, 7], velocity_vec=[1, 2], boundary=False, r=2)
 spikes = torch.tensor(spikes)
-sns.heatmap(spikes)
+sns.heatmap(spikes[:, :, 0])
 plt.show()
 rbm = RBM(spikes, N_H=N_H, device="cpu")
 rbm.learn(batchsize=10, n_epochs=100, lr=1e-3, lr_end=5e-4, start_decay=50, mom=0.9, wc=0, sp=None, x=2)
@@ -424,4 +425,4 @@ fig, ax = plt.subplots(8, 1, figsize=(8,32))
 for i in range(N_H):
     sns.kdeplot(np.array(h[i, :].ravel().cpu()), bw_adjust=0.1, ax=ax[i])
 plt.show()
-"""
+
