@@ -110,12 +110,12 @@ def plot_weights_true_reconstructed(VH_true, HH_true, VH_recon, HH_recon, normal
     ax[1,0].set_xlabel("hidden neurons")
     sns.heatmap(VH_recon.T, ax=ax[0,1], cbar=False, vmin=-1, vmax=1)
     ax[0,1].set_title("reconstructed")
-    ax[0,1].set_xticklabels([])
-    ax[0,1].set_yticklabels([])
+    #ax[0,1].set_xticklabels([])
+    #ax[0,1].set_yticklabels([])
     sns.heatmap(HH_recon, ax=ax[1,1], cbar=False, vmin=-1, vmax=1)
-    ax[1,1].set_yticklabels([])
+    #ax[1,1].set_yticklabels([])
     ax[1,1].set_xlabel("hidden neurons")
-    fig.tight_layout(rect=[0, 0, .9, 1])
+    #fig.tight_layout()
     plt.show()
 
     return
