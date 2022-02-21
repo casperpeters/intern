@@ -61,10 +61,6 @@ def cyclic_annealing(n_epochs, stepsize=200, lr_end=1e-4, start_decay=200, lr=1e
     for i in range(len(peaks)+1):
         dips[i] = int(i*2*stepsize)
 
-    # dips = np.where((lrs_cyclic[1:-1] < lrs_cyclic[0:-2]) * (lrs_cyclic[1:-1] < lrs_cyclic[2:]))[0]
-    # dips = np.concatenate([np.array([0]), dips], 0)
-    a = lrs_geo[peaks]
-
     for i in range(dips.shape[0]-1):
         lrs_base[dips[i]:dips[i+1]] = np.array(cyclic(stepsize*2-1 , stepsize=stepsize, max_lr=lrs_geo[peaks[i]], base_lr=lr_end))
 
