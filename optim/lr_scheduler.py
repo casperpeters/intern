@@ -14,27 +14,19 @@ def get_lrs(mode, n_epochs, **kwargs):
         lrs = linear_decay(n_epochs, **kwargs)
     elif mode == 'cosine_annealing_warm_restarts':
         lrs = cosine_annealing_warm_restarts(n_epochs, **kwargs)
+    elif mode == 'cyclic_annealing':
+        lrs = cyclic_annealing(n_epochs, stepsize=200, lr_end=1e-4, start_decay=200, lr=1e-3)
     else:
         raise ValueError('mode not recognized, use one of these: ' + modes)
 
     return lrs
 
 
-def plot_lrs(lrs, y_log=False):
-    plt.plot(lrs)
-    plt.xlabel('epochs', fontsize=18)
-    plt.ylabel('learning rate', fontsize=18)
-    plt.title('learning rate over epochs', fontsize=20)
-    if y_log:
-        plt.yscale('log')
-    return plt.gca()
-
-
-def cyclic(n_epochs, step_size=200, max_lr=1e-3, base_lr=1e-4):
+def cyclic(n_epochs, stepsize=200, max_lr=1e-3, base_lr=1e-4):
     lrs = [base_lr]
     for epoch in range(n_epochs):
-        cycle = np.floor(1 + epoch / (2 * step_size))
-        x = np.abs(epoch / step_size - 2 * cycle + 1)
+        cycle = np.floor(1 + epoch / (2 * stepsize))
+        x = np.abs(epoch / stepsize - 2 * cycle + 1)
         lrs.append(base_lr + (max_lr - base_lr) * np.max([0, (1-x)]))
     return lrs
 
@@ -58,12 +50,32 @@ def cosine_annealing_warm_restarts(n_epochs, max_lr=1e-2, min_lr=1e-3, T_i=200, 
     return lrs
 
 
+def cyclic_annealing(n_epochs, stepsize=200, lr_end=1e-4, start_decay=200, lr=1e-3):
+
+    lrs_cyclic = np.array(cyclic(n_epochs, stepsize=stepsize, max_lr=lr, base_lr=lr_end))
+    lrs_geo = np.array(geometric_decay(n_epochs, lr_end=lr_end, start_decay=start_decay, lr=lr))
+    lrs_base = np.ones(n_epochs+1) * lr_end
+
+    peaks = np.where((lrs_cyclic[1:-1] > lrs_cyclic[0:-2]) * (lrs_cyclic[1:-1] > lrs_cyclic[2:]))[0] + 1
+    dips = np.zeros(len(peaks)+1).astype(int)
+    for i in range(len(peaks)+1):
+        dips[i] = int(i*2*stepsize)
+
+    # dips = np.where((lrs_cyclic[1:-1] < lrs_cyclic[0:-2]) * (lrs_cyclic[1:-1] < lrs_cyclic[2:]))[0]
+    # dips = np.concatenate([np.array([0]), dips], 0)
+    a = lrs_geo[peaks]
+
+    for i in range(dips.shape[0]-1):
+        lrs_base[dips[i]:dips[i+1]] = np.array(cyclic(stepsize*2-1 , stepsize=stepsize, max_lr=lrs_geo[peaks[i]], base_lr=lr_end))
+
+    return lrs_base
+
 def linear_decay():
     raise ValueError('not implemented yet')
 
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
-    lrs = get_lrs(mode='cosine_annealing_warm_restarts', n_epochs=2000)
-    plot_lrs(lrs)
-    print(np.min(lrs))
+    lrs = get_lrs(mode='cyclic_annealing', n_epochs=2000)
+    plt.plot(lrs)
+    plt.show()
