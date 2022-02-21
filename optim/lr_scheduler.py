@@ -94,7 +94,7 @@ def cyclic(n_epochs, stepsize=200, max_lr=1e-3, base_lr=1e-4):
     return lrs
 
 
-def geometric_decay(n_epochs, lr_end=1e-5, start_decay=200, lr=1e-4):
+def geometric_decay(n_epochs, lr_end=1e-5, start_decay=200, lr=1e-3):
     """
     Generates a list of learning rates for aa geometrically decaying learning rate schedule.
 
@@ -121,7 +121,7 @@ def geometric_decay(n_epochs, lr_end=1e-5, start_decay=200, lr=1e-4):
     return lrs
 
 
-def cosine_annealing_warm_restarts(n_epochs, max_lr=1e-2, min_lr=1e-3, T_i=200, T_mult=1, lr_decay=.7):
+def cosine_annealing_warm_restarts(n_epochs, max_lr=2e-3, min_lr=4e-4, T_i=200, T_mult=1, lr_decay=.85):
     """
     Cosine annealing with warm restarts, described in paper []
 
