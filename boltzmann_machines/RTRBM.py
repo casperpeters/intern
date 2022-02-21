@@ -10,6 +10,7 @@ _ dReLU HU potential
 
 import torch
 from tqdm import tqdm
+from optim.lr_scheduler import get_lrs
 
 
 class RTRBM(object):
@@ -135,6 +136,9 @@ class RTRBM(object):
         elif self.dim == 3:
             num_batches = self.num_samples // batchsize
 
+        # get learning rate schedule
+        lrs = get_lrs(mode='geometric_decay', n_epochs=n_epochs)
+
         # learing rate
         if lr and lr_end and start_decay is not None:
             r = (lr_end / lr) ** (1 / (n_epochs - start_decay))
@@ -180,7 +184,7 @@ class RTRBM(object):
                     for i in range(len(dparam)): self.dparams[i] += dparam[i] / batchsize
 
                 # Update gradients
-                Dparams = self.update_grad(Dparams, lr=lr, mom=mom, wc=wc, sp=sp, x=x)
+                Dparams = self.update_grad(Dparams, lr=lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
 
             # hidden weights normalisation
             if U_normalisation and (epoch % 10) == 0:

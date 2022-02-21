@@ -3,10 +3,14 @@ import numpy as np
 import os
 import sys
 
-def load_data():
-    path = os.path.dirname(os.getcwd())
-    sys.path.append(path)
-    data_obj = h5py.File(path + '/data/real_zebrafish_data/subject_1_reconv_spikes.h5', 'r')
+
+def load_data(data_path='None'):
+    if data_path is None:
+        path = os.path.dirname(os.getcwd())
+        sys.path.append(path)
+        data_obj = h5py.File(path + '/data/real_zebrafish_data/subject_1_reconv_spikes.h5', 'r')
+    else:
+        data_obj = h5py.File(data_path, 'r')
     behavior = np.array(data_obj['Data']['behavior'])
     coordinates = np.array(data_obj['Data']['coords'])
     df = np.array(data_obj['Data']['df'])
