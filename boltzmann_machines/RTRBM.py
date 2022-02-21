@@ -54,8 +54,8 @@ class RTRBM(object):
 
         self.N_H = N_H
 
-        self.W = 0.01 * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
-        self.U = 0.01 * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
+        self.W = 0.01/torch.sqrt(self.N_V) * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
+        self.U = 0.01/torch.sqrt(self.N_H) * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
         self.b_H = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
         self.b_V = torch.zeros(1, self.N_V, dtype=self.dtype, device=self.device)
         self.b_init = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
@@ -65,12 +65,14 @@ class RTRBM(object):
             self.b_V[torch.isnan(self.b_V)] = 0.01 * torch.randn(1)
             self.b_V[self.b_V > 0.1] = 0.1 * torch.rand(1)
             self.b_V[self.b_V < 0.1] = -0.1 * torch.rand(1)
-            mu_H = torch.mean(self.visible_to_expected_hidden(data.reshape(self.N_V, self.T * self.num_samples)), 1)
+            mu_H = torch.mean(self.visible_to_expected_hidden(data.reshape(self.N_V, self.T * self.num_samples)), 1).to(self.device)
             self.b_H = -torch.log(1 / mu_H - 1)[None, :]
             self.b_H[torch.isnan(self.b_H)] = 0.01 * torch.randn(1)
             self.b_H[self.b_H > 0.1] = 0.1 * torch.rand(1)
             self.b_H[self.b_H < 0.1] = -0.1 * torch.rand(1)
 
+            self.b_V = self.b_V.to(self.device)
+            self.b_H = self.b_H.to(self.device)
 
         self.params = [self.W, self.U, self.b_H, self.b_V, self.b_init]
 
