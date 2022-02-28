@@ -1,6 +1,8 @@
 """
 This is a practical file for testing quick ideas. Sebastian, please don't adjust this one :)
 """
+from torch import Tensor
+from typing import List, Union
 
 import torch
 import numpy as np
@@ -9,6 +11,7 @@ from optim.lr_scheduler import get_lrs
 
 
 class RTRBM(object):
+
     def __init__(self, data, N_H=10, device='cuda', no_bias=False, debug_mode=False):
         if not torch.cuda.is_available():
             print('cuda not available, using cpu')
@@ -26,8 +29,8 @@ class RTRBM(object):
         else:
             raise ValueError("Data is not correctly defined: Use (N_V, T) or (N_V, T, num_samples) dimensions")
         self.N_H = N_H
-        self.W = 0.001 * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
-        self.U = 0.001 * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
+        self.W = 0.01 * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
+        self.U = 0.01 * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
         self.b_H = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
         self.b_V = torch.zeros(1, self.N_V, dtype=self.dtype, device=self.device)
         self.b_init = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
@@ -37,17 +40,20 @@ class RTRBM(object):
         if debug_mode:
             self.parameter_history = []
 
-    def learn(self, n_epochs=1000, lr_schedule='linear_decay', lr_regulisor=2, batch_size=128, CDk=10, PCD=False, sp=None, x=2, mom=0.9, wc=0.0002, AF=torch.sigmoid, disable_tqdm=False, **kwargs):
+    def learn(self, n_epochs=1000, lr=None, lr_schedule=None, lr_regulisor=None, batch_size=128, CDk=10, PCD=False, sp=None, x=2, mom=0.9, wc=0.0002, AF=torch.sigmoid, disable_tqdm=False, **kwargs):
         if self.dim == 2:
             num_batches = 1
             batch_size = 1
         elif self.dim == 3:
             num_batches = self.num_samples // batch_size
-
-        lrs = lr_regulisor * np.array(get_lrs(mode=lr_schedule, n_epochs=n_epochs, **kwargs))
+        if lr is None:
+            lrs = lr_regulisor * np.array(get_lrs(mode=lr_schedule, n_epochs=n_epochs, **kwargs))
+        else:
+            lrs = lr * torch.ones(n_epochs)
         Dparams = self.initialize_grad_updates()
         self.errors = torch.zeros(n_epochs, 1)
         self.disable = disable_tqdm
+        self.lrs = lrs
         for epoch in tqdm(range(0, n_epochs), disable=self.disable):
             err = 0
             for batch in range(0, num_batches):
@@ -68,7 +74,7 @@ class RTRBM(object):
                 Dparams = self.update_grad(Dparams, lr=lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
             self.errors[epoch] = err / self.V.numel()
             if self.debug_mode:
-                self.parameter_history.append([self.params])
+                self.parameter_history.append([param.detach().clone() for param in self.params])
 
     def return_params(self):
         return [self.W, self.U, self.b_V, self.b_init, self.b_H, self.errors]

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from tqdm import tqdm
-from boltzmann_machines.RTRBM_ import RTRBM
+from boltzmann_machines.cp_rtrbm import RTRBM
 
 
 def get_rtrbm_data(N_H=3,
