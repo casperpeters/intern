@@ -11,7 +11,6 @@ from optim.lr_scheduler import get_lrs
 
 
 class RTRBM(object):
-
     def __init__(self, data, N_H=10, device='cuda', no_bias=False, debug_mode=False):
         if not torch.cuda.is_available():
             print('cuda not available, using cpu')
@@ -29,8 +28,8 @@ class RTRBM(object):
         else:
             raise ValueError("Data is not correctly defined: Use (N_V, T) or (N_V, T, num_samples) dimensions")
         self.N_H = N_H
-        self.W = 0.01 * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
-        self.U = 0.01 * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
+        self.W = 0.01/self.N_V * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
+        self.U = 0.01/self.N_H * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
         self.b_H = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
         self.b_V = torch.zeros(1, self.N_V, dtype=self.dtype, device=self.device)
         self.b_init = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)

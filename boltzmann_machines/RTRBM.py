@@ -15,7 +15,7 @@ from optim.lr_scheduler import get_lrs
 
 class RTRBM(object):
 
-    def __init__(self, data, N_H=10, device=None, init_biases=False):
+    def __init__(self, data, N_H=10, device=None, init_biases=False, debug=False):
 
         """     __init__
 
@@ -43,6 +43,7 @@ class RTRBM(object):
 
         self.dtype = torch.float
         self.V = data.float().to(self.device)
+        self.debug = debug
         self.dim = torch.tensor(self.V.shape).shape[0]
 
         if self.dim == 2:
@@ -55,40 +56,43 @@ class RTRBM(object):
 
         self.N_H = N_H
 
-        self.W = 0.01/torch.sqrt(self.N_V) * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
-        self.U = 0.01/torch.sqrt(self.N_H) * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
+        self.W = 0.01/self.N_V * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
+        self.U = 0.01/self.N_H * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
         self.b_H = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
         self.b_V = torch.zeros(1, self.N_V, dtype=self.dtype, device=self.device)
         self.b_init = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
 
         if init_biases:
-            self.b_V = -torch.log(1 / torch.mean(data.reshape(self.N_V, self.T * self.num_samples), 1) - 1)[None, :]
-            self.b_V[torch.isnan(self.b_V)] = 0.01 * torch.randn(1)
-            self.b_V[self.b_V > 0.1] = 0.1 * torch.rand(1)
-            self.b_V[self.b_V < 0.1] = -0.1 * torch.rand(1)
+            self.b_V = -torch.log(1 / torch.mean(data.reshape(self.N_V, self.T * self.num_samples), 1) - 1)[None, :].to(self.device)
+            self.b_V[torch.isnan(self.b_V)] = 0.01 * torch.randn(1).to(self.device)
+            self.b_V[self.b_V > 0.1] = 0.1 * torch.rand(1).to(self.device)
+            self.b_V[self.b_V < 0.1] = -0.1 * torch.rand(1).to(self.device)
             mu_H = torch.mean(self.visible_to_expected_hidden(data.reshape(self.N_V, self.T * self.num_samples)), 1).to(self.device)
-            self.b_H = -torch.log(1 / mu_H - 1)[None, :]
-            self.b_H[torch.isnan(self.b_H)] = 0.01 * torch.randn(1)
-            self.b_H[self.b_H > 0.1] = 0.1 * torch.rand(1)
-            self.b_H[self.b_H < 0.1] = -0.1 * torch.rand(1)
+            self.b_H = -torch.log(1 / mu_H - 1)[None, :].to(self.device)
+            self.b_H[torch.isnan(self.b_H)] = 0.01 * torch.randn(1).to(self.device)
+            self.b_H[self.b_H > 0.1] = 0.1 * torch.rand(1).to(self.device)
+            self.b_H[self.b_H < 0.1] = -0.1 * torch.rand(1).to(self.device)
 
             self.b_V = self.b_V.to(self.device)
             self.b_H = self.b_H.to(self.device)
 
         self.params = [self.W, self.U, self.b_H, self.b_V, self.b_init]
 
+        if self.debug:
+            self.parameter_history = []
+            self.parameter_history.append(self.params)
 
     def learn(self,
               n_epochs=1000,
               batchsize=128,
               CDk=10, PCD=False,
-              lr=1e-3, lr_end=None, start_decay=None,
+              min_lr=1e-3, max_lr=None, lr_mode=None,
               sp=None, x=2,
               mom=0.9,
               wc=0.0002,
               AF=torch.sigmoid,
               U_normalisation=False,
-              disable_tqdm=False):
+              disable_tqdm=False, **kwargs):
 
         """     Training of the RTRBM
 
@@ -137,11 +141,10 @@ class RTRBM(object):
             num_batches = self.num_samples // batchsize
 
         # get learning rate schedule
-        lrs = get_lrs(mode='geometric_decay', n_epochs=n_epochs)
-
-        # learing rate
-        if lr and lr_end and start_decay is not None:
-            r = (lr_end / lr) ** (1 / (n_epochs - start_decay))
+        if lr_mode is None:
+            lrs = min_lr * torch.ones(n_epochs)
+        else:
+            lrs = get_lrs(mode=lr_mode, n_epochs=n_epochs, min_lr=min_lr, max_lr=max_lr, **kwargs)
 
         Dparams = self.initialize_grad_updates()
 
@@ -194,9 +197,8 @@ class RTRBM(object):
 
             self.errors[epoch] = err / self.V.numel()
 
-            if lr and lr_end and start_decay is not None:
-                if start_decay <= epoch:
-                    lr *= r
+            if self.debug:
+                self.parameter_history.append([param.detach().clone() for param in self.params])
 
     def return_params(self):
         return [self.W, self.U, self.b_V, self.b_init, self.b_H, self.errors]
@@ -547,8 +549,8 @@ def create_BB(N_V=16, T=32, n_samples=256, width_vec=[4, 5, 6, 7], velocity_vec=
     return torch.tensor(data, dtype=torch.float)
 
 
-"""
 
+"""
 # Generate bouncing ball data
 N_V, N_H, T = 16, 8, 64
 data = create_BB(N_V=N_V, T=T, n_samples=64, width_vec=[4, 5, 6, 7], velocity_vec=[2, 3], boundary=False)
@@ -559,7 +561,7 @@ plt.ylabel('Neuron index')
 plt.title('Training data one example batch')
 
 # Initialize and train RTRBM
-rtrbm = RTRBM(data, N_H=N_H, device="cpu")
+rtrbm = RTRBM(data, N_H=N_H, device="cpu", debug=True)
 rtrbm.learn(batchsize=64, n_epochs=100, lr=1e-2, lr_end=1e-3, start_decay=50, sp=1e-5, x=2)
 
 # Infer from trained RTRBM and plot some results
@@ -586,6 +588,7 @@ ax[1, 1].set_title('Hidden to hidden connection')
 ax[1, 1].set_xlabel('Hidden(t-1)')
 ax[1, 1].set_ylabel('Hiddens(t)')
 plt.show()
+
 
 
 # EXAMPLE RUN 2

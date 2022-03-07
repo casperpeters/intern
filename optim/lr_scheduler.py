@@ -60,7 +60,7 @@ def get_lrs(mode, n_epochs, **kwargs):
     return lrs
 
 
-def cyclic(n_epochs, stepsize=200, max_lr=1e-3, base_lr=1e-4):
+def cyclic(n_epochs, stepsize=200, min_lr=1e-4, max_lr=1e-3):
     """
     This is a function to create a cyclic learning rate schedule.
 
@@ -73,7 +73,7 @@ def cyclic(n_epochs, stepsize=200, max_lr=1e-3, base_lr=1e-4):
         learning rate is constant.
     max_lr : float, optional
         The maximum learning rate.
-    base_lr : float, optional
+    min_lr : float, optional
         The minimum learning rate.
 
     Returns
@@ -86,15 +86,15 @@ def cyclic(n_epochs, stepsize=200, max_lr=1e-3, base_lr=1e-4):
     https://arxiv.org/pdf/1506.01186.pdf
     """
 
-    lrs = [base_lr]
+    lrs = [min_lr]
     for epoch in range(n_epochs):
         cycle = np.floor(1 + epoch / (2 * stepsize))
         x = np.abs(epoch / stepsize - 2 * cycle + 1)
-        lrs.append(base_lr + (max_lr - base_lr) * np.max([0, (1-x)]))
+        lrs.append(min_lr + (max_lr - min_lr) * np.max([0, (1-x)]))
     return lrs
 
 
-def geometric_decay(n_epochs, lr_end=1e-5, start_decay=200, lr=1e-3):
+def geometric_decay(n_epochs, min_lr=1e-4, max_lr=1e-3, start_decay=200):
     """
     Generates a list of learning rates for aa geometrically decaying learning rate schedule.
 
@@ -102,12 +102,12 @@ def geometric_decay(n_epochs, lr_end=1e-5, start_decay=200, lr=1e-3):
     ----------
     n_epochs : int
         The number of epochs to train for.
-    lr_end : float, optional
-        The final learning rate. Default: 1e-5
+    min_lr : float, optional
+        The final learning rate. Default: 1e-4
     start_decay : int, optional
         The epoch to start decaying the learning rate. Default: 200
-    lr : float, optional
-        The initial learning rate. Default: 1e-4
+    max_lr : float, optional
+        The initial learning rate. Default: 1e-3
 
     Returns
     -------
@@ -115,13 +115,13 @@ def geometric_decay(n_epochs, lr_end=1e-5, start_decay=200, lr=1e-3):
         The learning rates for each epoch.
     """
 
-    lrs = [lr]
+    lrs = [max_lr]
     for epoch in range(n_epochs):
-        lrs.append(lrs[epoch] * (lr_end / lrs[epoch]) ** (1 / (n_epochs - start_decay)))
+        lrs.append(lrs[epoch] * (min_lr / lrs[epoch]) ** (1 / (n_epochs - start_decay)))
     return lrs
 
 
-def cosine_annealing_warm_restarts(n_epochs, max_lr=2e-3, min_lr=4e-4, T_i=200, T_mult=1, lr_decay=.85):
+def cosine_annealing_warm_restarts(n_epochs, min_lr=4e-4, max_lr=2e-3, T_i=200, T_mult=1, lr_decay=.85):
     """
     Cosine annealing with warm restarts, described in paper []
 
@@ -162,11 +162,11 @@ def cosine_annealing_warm_restarts(n_epochs, max_lr=2e-3, min_lr=4e-4, T_i=200, 
     return lrs
 
 
-def cyclic_annealing(n_epochs, stepsize=200, lr_end=1e-4, start_decay=200, lr=1e-3):
+def cyclic_annealing(n_epochs, stepsize=200, min_lr=1e-4, start_decay=200, max_lr=1e-3):
 
-    lrs_cyclic = np.array(cyclic(n_epochs, stepsize=stepsize, max_lr=lr, base_lr=lr_end))
-    lrs_geo = np.array(geometric_decay(n_epochs, lr_end=lr_end, start_decay=start_decay, lr=lr))
-    lrs_base = np.ones(n_epochs+1) * lr_end
+    lrs_cyclic = np.array(cyclic(n_epochs, stepsize=stepsize, max_lr=max_lr, min_lr=min_lr))
+    lrs_geo = np.array(geometric_decay(n_epochs, min_lr=min_lr, start_decay=start_decay, max_lr=max_lr))
+    lrs_base = np.ones(n_epochs+1) * min_lr
 
     peaks = np.where((lrs_cyclic[1:-1] > lrs_cyclic[0:-2]) * (lrs_cyclic[1:-1] > lrs_cyclic[2:]))[0] + 1
     dips = np.zeros(len(peaks)+1).astype(int)
@@ -174,12 +174,12 @@ def cyclic_annealing(n_epochs, stepsize=200, lr_end=1e-4, start_decay=200, lr=1e
         dips[i] = int(i*2*stepsize)
 
     for i in range(dips.shape[0]-1):
-        lrs_base[dips[i]:dips[i+1]] = np.array(cyclic(stepsize*2-1, stepsize=stepsize, max_lr=lrs_geo[peaks[i]], base_lr=lr_end))
+        lrs_base[dips[i]:dips[i+1]] = np.array(cyclic(stepsize*2-1, stepsize=stepsize, max_lr=lrs_geo[peaks[i]], min_lr=min_lr))
 
     return lrs_base.tolist()
 
 
-def linear_decay(n_epochs, lr_start=1e-3, lr_stop=1e-5):
+def linear_decay(n_epochs, max_lr=1e-3, min_lr=1e-5):
     """
     Creates a list of learning rates for a linear decay schedule.
 
@@ -198,12 +198,18 @@ def linear_decay(n_epochs, lr_start=1e-3, lr_stop=1e-5):
         The learning rates for each epoch.
     """
 
-    lrs = np.linspace(lr_start, lr_stop, n_epochs)
+    lrs = np.linspace(max_lr, min_lr, n_epochs)
     return lrs.tolist()
 
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
-    lrs = get_lrs(mode='linear_decay', n_epochs=2000)
+    n_epochs = 1000
+    start = 300
+    lr_c_range = 0.2
+    min_lr = 1e-3
+    max_lr = 1e-2
+    lrs = np.concatenate([get_lrs(mode='cyclic', n_epochs=start, min_lr=max_lr*(1-lr_c_range), max_lr=max_lr*(1+lr_c_range), stepsize=50),
+          get_lrs(mode='cyclic_annealing', min_lr=min_lr, max_lr=max_lr, n_epochs=n_epochs-start, stepsize=50)])
     plt.plot(lrs)
     plt.show()

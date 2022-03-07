@@ -26,8 +26,9 @@ class RTRBM(object):
 
         self.N_H = N_H
 
-        self.W = 0.01 * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
-        self.U = 0.01 * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
+        self.W = 0.01/self.N_V * torch.randn(self.N_H, self.N_V, dtype=self.dtype, device=self.device)
+        self.U_p = 0.01/self.N_H * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
+        self.U_m = 0.01/self.N_H * torch.randn(self.N_H, self.N_H, dtype=self.dtype, device=self.device)
         self.b_V = torch.zeros(1, self.N_V, dtype=self.dtype, device=self.device)
 
         # Initial
@@ -39,7 +40,7 @@ class RTRBM(object):
         self.gamma_p = torch.ones(self.N_H, dtype=self.dtype, device=self.device)
         self.gamma_m = torch.ones(self.N_H, dtype=self.dtype, device=self.device)
 
-        self.params = [self.W, self.U, self.b_V,
+        self.params = [self.W, self.U_p, self.U_m, self.b_V,
                        self.b_init,
                        self.theta_p, self.theta_m, self.gamma_p, self.gamma_m]
 
@@ -80,21 +81,16 @@ class RTRBM(object):
                         v_data = self.V[:, :, batch * batchsize + i]
 
                     # Forward
-                    H_data = self.visible_to_expected_hidden(v_data)
+                    r_p_data, r_m_data = self.visible_to_expected_hidden(v_data)
 
-                    # Perform contrastive divergence and compute model statistics
-                    if PCD and epoch != 0:
-                        # use last gibbs sample as input (Persistant Contrastive Divergence)
-                        mean_rt, mean_vt, h_model, v_model = self.CD(v_model[:, :, -1],  CDk, AF=AF)
-                    else:
-                        # use data (normal Contrastive Divergence)
-                        mean_rt, mean_vt, h_model, v_model = self.CD(v_data, H_data, CDk, AF=AF)
+                    # use data (normal Contrastive Divergence)
+                    mean_rt_p_model, mean_rt_m_model, mean_vt_model, h_model, v_model = self.CD(v_data, r_p_data, r_m_data, CDk, AF=AF)
 
                     # Accumulate error
                     err += torch.sum((v_data - v_model[:, :, -1]) ** 2)
 
                     # Backpropagation, compute gradients and stores mean value
-                    dparam = self.grad(v_data, H_data, h_model, v_model, mean_vt, mean_rt, CDk)
+                    dparam = self.grad(v_data, r_p_data, r_m_data, h_model, v_model, mean_vt_model, mean_rt_p_model, mean_rt_m_model, CDk)
                     for i in range(len(dparam)): self.dparams[i] += dparam[i] / batchsize
 
                 # Update gradients
@@ -109,44 +105,50 @@ class RTRBM(object):
                 if epoch % 10 == 0:
                     lr *= lr_decay
 
-    def CD(self, v_data, rt_data, CDk, AF=torch.sigmoid):
+    def CD(self, v_data, r_p_data, r_m_data, CDk, AF=torch.sigmoid):
 
         h_model = torch.zeros(self.N_H, self.T, CDk, dtype=self.dtype, device=self.device)
-        rt_model = torch.zeros(self.N_H, self.T, CDk, dtype=self.dtype, device=self.device)
+        rt_p_model = torch.zeros(self.N_H, self.T, CDk, dtype=self.dtype, device=self.device)
+        rt_m_model = torch.zeros(self.N_H, self.T, CDk, dtype=self.dtype, device=self.device)
         v_model = torch.zeros(self.N_V, self.T, CDk, dtype=self.dtype, device=self.device)
 
         v_model[:, :, 0] = v_data.detach()
-        rt_model[:, :, 0] = self.visible_to_expected_hidden(v_model[:, :, 0])
-        h_model[:, :, 0] = self.visible_to_hidden(v_model[:, :, 0], rt_data)
+        rt_p_model[:, :, 0], rt_m_model[:, :, 0] = self.visible_to_expected_hidden(v_model[:, :, 0])
+        h_model[:, :, 0] = self.visible_to_hidden(v_model[:, :, 0], r_p_data, r_m_data)
 
         for kk in range(1, CDk):
             v_model[:, :, kk] = self.hidden_to_visible(h_model[:, :, kk], AF=AF)
-            rt_model[:, :, kk] = self.visible_to_expected_hidden(v_model[:, :, kk])
-            h_model[:, :, kk] = self.visible_to_hidden(v_model[:, :, kk], rt_data)
+            rt_p_model[:, :, kk], rt_m_model[:, :, kk] = self.visible_to_expected_hidden(v_model[:, :, kk])
+            h_model[:, :, kk] = self.visible_to_hidden(v_model[:, :, kk], r_p_data, r_m_data)
 
-        mean_rtm = torch.mean(rt_model, 2)
+        mean_r_p_model = torch.mean(rt_p_model, 2)
+        mean_r_m_model = torch.mean(rt_m_model, 2)
         mean_vtm = torch.mean(v_model, 2)
 
-        return mean_rtm, mean_vtm, h_model, v_model
+        return mean_r_p_model, mean_r_m_model, mean_vtm, h_model, v_model
 
     def visible_to_expected_hidden(self, v):
         T = v.shape[1]
-        rt = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
-        tp = self.theta_p
-        tm = self.theta_m
-        gp = self.gamma_p
-        gm = self.gamma_m
+        rt_p = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
+        rt_m = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
+
+        tp = self.theta_p.detach().clone()
+        tm = self.theta_m.detach().clone()
+        gp = self.gamma_p.detach().clone()
+        gm = self.gamma_m.detach().clone()
 
         for t in range(0, T):
 
             I = torch.matmul(v[:, t], self.W.T)
             if t == 0:
-                IU = self.b_init[0]
+                IU_p = self.b_init_p[0].detach().clone()
+                IU_m = self.b_init_m[0].detach().clone()
             elif t > 0:
-                IU = torch.matmul(self.U, rt[:, t - 1])
+                IU_p = torch.matmul(self.U_p, rt_p[:, t - 1])
+                IU_m = torch.matmul(self.U_m, rt_m[:, t - 1])
 
-            I_plus = (-I + tp + IU) / torch.sqrt(gp)
-            I_min = (I + tm + IU) / torch.sqrt(gm)
+            I_plus = (-I + tp + IU_p) / torch.sqrt(gp)
+            I_min = (I + tm + IU_m) / torch.sqrt(gm)
 
             phi_plus = self.phi(I_plus)
             phi_min = self.phi(I_min)
@@ -165,16 +167,17 @@ class RTRBM(object):
             p_plus[p_plus < 0] = 0
 
             p_min = 1 - p_plus
-            rt[:, t] = p_plus * ((I - tp - IU) / gp + 1 / (torch.sqrt(gp) * phi_plus)) + \
-                       p_min * ((I - tm - IU) / gm - 1 / (torch.sqrt(gm) * phi_min))
+            rt_p[:, t] = p_plus * ((I - tp - IU_p) / gp + 1 / (torch.sqrt(gp) * phi_plus))
+            rt_m[:, t] = p_min * ((I - tm - IU_m) / gm - 1 / (torch.sqrt(gm) * phi_min))
 
-            if torch.sum(torch.isnan(rt[:, t])):
+            if torch.sum(torch.isnan(rt_p[:, t])):
+                a=1
+            if torch.sum(torch.isnan(rt_m[:, t])):
                 a=1
 
-        return rt
+        return rt_p, rt_m
 
-
-    def visible_to_hidden(self, v, rt):
+    def visible_to_hidden(self, v, rt_p, rt_m):
         """     Computes the hidden layer activations of the RNN.
 
             Parameters
@@ -191,21 +194,23 @@ class RTRBM(object):
 
         T = v.shape[1]
         h_sampled = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
-        tp = self.theta_p
-        tm = self.theta_m
-        gp = self.gamma_p
-        gm = self.gamma_m
+        tp = self.theta_p.detach().clone()
+        tm = self.theta_m.detach().clone()
+        gp = self.gamma_p.detach().clone()
+        gm = self.gamma_m.detach().clone()
 
         for t in range(0, T):
 
             I = torch.matmul(v[:, t], self.W.T)
             if t == 0:
-                IU = self.b_init[0]
+                IU_p = self.b_init_p[0].detach().clone()
+                IU_m = self.b_init_m[0].detach().clone()
             elif t > 0:
-                IU = torch.matmul(self.U, rt[:, t - 1])
+                IU_p = torch.matmul(self.U, rt_p[:, t - 1])
+                IU_m = torch.matmul(self.U, rt_m[:, t - 1])
 
-            I_plus = (-I + tp + IU) / torch.sqrt(gp)
-            I_min = (I + tm + IU) / torch.sqrt(gm)
+            I_plus = (-I + tp + IU_p) / torch.sqrt(gp)
+            I_min = (I + tm + IU_m) / torch.sqrt(gm)
 
             phi_plus = self.phi(I_plus)
             phi_min = self.phi(I_min)
@@ -215,7 +220,7 @@ class RTRBM(object):
 
             sqrt2 = torch.tensor(1.41421356237, dtype=self.dtype, device=self.device)
 
-            for i in range(self.N_H):  # for loop is obsolete
+            for i in range(self.N_H):
                 if torch.isnan(p_plus[i]):
                     if torch.abs(I_plus[i]) > torch.abs(I_min[i]):
                         p_plus[i] = 1
@@ -261,23 +266,32 @@ class RTRBM(object):
 
         return [torch.zeros_like(param, dtype=self.dtype, device=self.device) for param in self.params]
 
-    def grad_dReLU(self, I_data, I_model, rtd=None, rtm=None): # take for rt=rt[:, t-1]
+    def grad_dReLU(self, I_data, I_model, rt_p_data=None, rt_m_data=None, rt_p_model=None, rt_m_model=None): # take for rt=rt[:, t-1]
 
 
-        tp = self.theta_p
-        tm = self.theta_m
-        gp = self.gamma_p
-        gm = self.gamma_m
-        if rtd == None or rtm == None:
-            IUd = self.b_init[0]
-            IUm = self.b_init[0]
-        if rtd is not None or rtm is not None:
-            IUd = torch.matmul(self.U, rtd) # needs to be rt[:, t-1]
-            IUm = torch.matmul(self.U, rtm)
+        tp = self.theta_p.detach().clone()
+        tm = self.theta_m.detach().clone()
+        gp = self.gamma_p.detach().clone()
+        gm = self.gamma_m.detach().clone()
+
+        if rt_p_data == None or rt_m_data == None or rt_p_model == None or rt_m_model == None:
+            IU_p_data = self.b_init_p[0].detach().clone()
+            IU_m_data = self.b_init_m[0].detach().clone()
+            IU_p_model = self.b_init_p[0].detach().clone()
+            IU_m_model = self.b_init_m[0].detach().clone()
+
+        if rt_p_data != None or rt_m_data != None or rt_p_model != None or rt_m_model != None:
+            IU_p_data = torch.matmul(self.U_p, rt_p_data) # needs to be rt[:, t-1]
+            IU_m_data = torch.matmul(self.U_m, rt_m_data)
+
+            IU_p_model = torch.matmul(self.U_p, rt_p_model)  # needs to be rt[:, t-1]
+            IU_m_model = torch.matmul(self.U_m, rt_m_model)
+
+
         # Data
         I_d = I_data
-        I_plus = (-I_d + tp + IUd) / torch.sqrt(gp)
-        I_min = (I_d + tm + IUd) / torch.sqrt(gm)
+        I_plus = (-I_d + tp + IU_p_data) / torch.sqrt(gp)
+        I_min = (I_d + tm + IU_m_data) / torch.sqrt(gm)
         phi_plus_d = self.phi(I_plus) / torch.sqrt(gp)
         phi_min_d = self.phi(I_min) / torch.sqrt(gm)
         p_plus_d = 1 / (1 + (phi_min_d / phi_plus_d))
@@ -285,34 +299,34 @@ class RTRBM(object):
 
         # Model
         I_m = I_model
-        I_plus = (-I_m + tp + IUm) / torch.sqrt(gp)
-        I_min = (I_m + tm + IUm) / torch.sqrt(gm)
+        I_plus = (-I_m + tp + IU_p_model) / torch.sqrt(gp)
+        I_min = (I_m + tm + IU_m_model) / torch.sqrt(gm)
         phi_plus_m = self.phi(I_plus) / torch.sqrt(gp)
         phi_min_m = self.phi(I_min) / torch.sqrt(gm)
         p_plus_m = 1 / (1 + (phi_min_m / phi_plus_m))
         p_min_m = 1 - p_plus_m
 
         # positive - negative gradient
-        dtheta_p = - ((p_plus_d * ((I_d - tp - IUd) / gp + 1 / (torch.sqrt(gp) * phi_plus_d))) - \
-                      (p_plus_m * ((I_m - tp - IUm) / gp + 1 / (torch.sqrt(gp) * phi_plus_m))))
+        dtheta_p = - ((p_plus_d * ((I_d - tp - IU_p_data) / gp + 1 / (torch.sqrt(gp) * phi_plus_d))) - \
+                      (p_plus_m * ((I_m - tp - IU_p_model) / gp + 1 / (torch.sqrt(gp) * phi_plus_m))))
 
-        dtheta_m = - ((p_min_d * ((I_d - tm - IUd) / gm - 1 / (torch.sqrt(gm) * phi_min_d))) - \
-                      (p_min_m * ((I_m - tm - IUm) / gm - 1 / (torch.sqrt(gm) * phi_min_m))))
+        dtheta_m = - ((p_min_d * ((I_d - tm - IU_m_data) / gm - 1 / (torch.sqrt(gm) * phi_min_d))) - \
+                      (p_min_m * ((I_m - tm - IU_m_model) / gm - 1 / (torch.sqrt(gm) * phi_min_m))))
 
-        dgamma_p = -1 / 2 * ((p_plus_d * (1 / gp + ((I_d - tp - IUd)
-                                                              / gp) ** 2 + (I_d - tp - IUd) / (
+        dgamma_p = -1 / 2 * ((p_plus_d * (1 / gp + ((I_d - tp - IU_p_data)
+                                                              / gp) ** 2 + (I_d - tp - IU_p_data) / (
                                                   gp * phi_plus_d))) -
 
-                             (p_plus_m * (1 / gp + ((I_m - tp - IUm)
-                                                              / gp) ** 2 + (I_m - tp - IUm) / (
+                             (p_plus_m * (1 / gp + ((I_m - tp - IU_p_model)
+                                                              / gp) ** 2 + (I_m - tp - IU_p_model) / (
                                                   gp * phi_plus_m))))
 
-        dgamma_m = -1 / 2 * ((p_min_d * (1 / gm + ((I_d - tm - IUd)
-                                                             / gm) ** 2 - (I_d - tm - IUd) / (
+        dgamma_m = -1 / 2 * ((p_min_d * (1 / gm + ((I_d - tm - IU_m_data)
+                                                             / gm) ** 2 - (I_d - tm - IU_m_data) / (
                                                  gm * phi_min_d))) -
 
-                             (p_min_m * (1 / gm + ((I_m - tm - IUm)
-                                                             / gm) ** 2 - (I_m - tm - IUm) / (
+                             (p_min_m * (1 / gm + ((I_m - tm - IU_m_model)
+                                                             / gm) ** 2 - (I_m - tm - IU_m_model) / (
                                                  gm * phi_min_m))))
 
         if torch.sum(torch.isnan(dtheta_p)):
@@ -326,20 +340,22 @@ class RTRBM(object):
 
         return dtheta_p, dtheta_m, dgamma_p, dgamma_m
 
-    def drt(self, I, rt=None, derivative='rt'): # take for rt=rt[:, t-1]
+    def drt(self, I, rt_p=None, rt_m=None, derivative='rt'): # take for rt=rt[:, t-1]
 
-        gp = self.gamma_p
-        gm = self.gamma_m
-        tp = self.theta_p
-        tm = self.theta_m
+        gp = self.gamma_p.detach().clone()
+        gm = self.gamma_m.detach().clone()
+        tp = self.theta_p.detach().clone()
+        tm = self.theta_m.detach().clone()
 
-        if rt == None:
-            IU = self.b_init[0]
-        elif rt is not None:
-            IU = torch.matmul(self.U, rt) # needs to be rt[:, t-1]
+        if rt_p == None or rt_m == 0:
+            IU_p = self.b_init_p[0].detach().clone()
+            IU_m = self.b_init_m[0].detach().clone()
+        elif rt_p != None or rt_m != None:
+            IU_p = torch.matmul(self.U_p, rt_p) # needs to be rt[:, t-1]
+            IU_m = torch.matmul(self.U_m, rt_m) # needs to be rt[:, t-1]
 
-        I_plus = (-I + tp + IU) / torch.sqrt(gp)
-        I_min = (I + tm + IU) / torch.sqrt(gm)
+        I_plus = (-I + tp + IU_p) / torch.sqrt(gp)
+        I_min = (I + tm + IU_m) / torch.sqrt(gm)
         phi_p = self.phi(I_plus)
         phi_m = self.phi(I_min)
         Zp = phi_p / torch.sqrt(gp)
@@ -352,47 +368,38 @@ class RTRBM(object):
 
 
 
-        if derivative =='rt':
-            drt = - 1 / (gp * gm * (torch.sqrt(gm) * phi_p + torch.sqrt(gp) * phi_m) ** 2) * \
-                  ((gm * phi_p) ** 2 + (gp * phi_m) ** 2 + \
-                   torch.sqrt(gm) * phi_m * dphi_p * (-gp * tm + gm * tp + (gm - gp) * (IU - I)) + \
-                   (gm + gp) * (gm * dphi_p - gp * dphi_m) + \
-                   torch.sqrt(gp) * phi_p * \
-                   (torch.sqrt(gm) * (gm + gp) * phi_m + dphi_m * (-gp * tm + gm * tp + (gm - gp) * (IU - I)))
-                   ) # U is later added line 515
+        if derivative =='rt_p':
+            drt = (-1 - dphi_p / phi_p**2) / gp # dU_p chain rule is later added
             if torch.sum(torch.isnan(drt)):
                 a=1
 
-        if derivative =='U':
-            drt = - 1 / (gp * gm * (torch.sqrt(gm) * phi_p + torch.sqrt(gp) * phi_m) ** 2) * \
-                  ((gm * phi_p) ** 2 + (gp * phi_m) ** 2 + \
-                   torch.sqrt(gm) * phi_m * dphi_p * (-gp * tm + gm * tp + (gm - gp) * (IU - I)) + \
-                   (gm + gp) * (gm * dphi_p - gp * dphi_m) + \
-                   torch.sqrt(gp) * phi_p * \
-                   (torch.sqrt(gm) * (gm + gp) * phi_m + dphi_m * (-gp * tm + gm * tp + (gm - gp) * (IU - I)))
-                   )  # rt is later added line 515
+        if derivative =='rt_m':
+            drt = (1 - dphi_m/phi_m**2) / gm # dU_m chain rule is later added
+            if torch.sum(torch.isnan(drt)):
+                a=1
+
+        if derivative =='U_p':
+            drt = (-1 - dphi_p / phi_p ** 2) / gp  # drt_p chain rule is later added
             if torch.sum(torch.isnan(drt)):
                 a = 1
 
-        if derivative =='b_init':
-            drt = - 1 / (gp * gm * (torch.sqrt(gm) * phi_p + torch.sqrt(gp) * phi_m) ** 2) * \
-                  ((gm * phi_p) ** 2 + (gp * phi_m) ** 2 + \
-                   torch.sqrt(gm) * phi_m * dphi_p * (IU * (gm - gp) -gp * tm + gm * tp + I * (gp - gm)) + \
-                   (gm + gp) * (gm * dphi_p - gp * dphi_m) + \
-                   torch.sqrt(gp) * phi_p * \
-                   (torch.sqrt(gm) * (gm + gp) * phi_m + dphi_m * (IU * (gm - gp) -gp * tm + gm * tp + I * (gp - gm)))
-                   )
+        if derivative =='U_m':
+            drt = (-1 - dphi_m / phi_m ** 2) / gm  # drt_m chain rule is later added
+            if torch.sum(torch.isnan(drt)):
+                a = 1
+
+        if derivative =='b_init_p':
+            drt = (-1 - dphi_p / phi_p ** 2) / gp
+            if torch.sum(torch.isnan(drt)):
+                a = 1
+
+        if derivative =='b_init_m':
+            drt = (-1 - dphi_m / phi_m ** 2) / gm
             if torch.sum(torch.isnan(drt)):
                 a = 1
 
         if derivative == 'W':
-            drt = 1 / (gp * gm * (torch.sqrt(gm) * phi_p + torch.sqrt(gp) * phi_m) ** 2) * \
-                  ((gm * phi_p) ** 2 + (gp * phi_m) ** 2 + \
-                   torch.sqrt(gm) * phi_m * dphi_p * (-gp * tm + gm * tp + (gm - gp) * (IU - I)) + \
-                   (gm + gp) * (gm * dphi_p - gp * dphi_m) + \
-                   torch.sqrt(gp) * phi_p * \
-                   (torch.sqrt(gm) * (gm + gp) * phi_m + dphi_m * (-gp * tm + gm * tp + (gm - gp) * (IU - I)))
-                   )  # vt is later added line 515
+            drt =   # vt is later added line 515
             if torch.sum(torch.isnan(drt)):
                 a = 1
 
@@ -438,7 +445,8 @@ class RTRBM(object):
 
         return drt
 
-    def grad(self, v_data, rtd, h_model, v_model, mean_vtm, mean_rtm, CDk):
+
+    def grad(self, v_data, rt_p_data, rt_m_data, h_model, v_model, mean_vtm, mean_r_p_model, mean_r_m_model, CDk):
         """
             Computes the gradient of the parameters of the RTRBM.
 
@@ -456,14 +464,20 @@ class RTRBM(object):
         param = torch.zeros(self.N_H, dtype=self.dtype, device=self.device)
         param = [param, param, param, param]# dtheta_p, dtheta_m, dgamma_p, dgamma_m
 
-        drt_drt_min_1 = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
-        dr_dU = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
-        dr_dW = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
-        dr_db_init = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
-        dr_dtheta_p = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
-        dr_dtheta_m = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
-        dr_dgamma_p = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
-        dr_dgamma_m = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+        drtp_drtp_min_1 = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+        drp_dU_p = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+        drp_dW = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+        drp_db_init_p = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
+        drp_dtheta_p = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+        drp_dgamma_p = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+
+        drtm_drtm_min_1 = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+        drm_dU_m = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+        drm_dW = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+        drm_db_init_m = torch.zeros(1, self.N_H, dtype=self.dtype, device=self.device)
+        drm_dtheta_m = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+        drm_dgamma_m = torch.zeros(self.N_H, self.T, dtype=self.dtype, device=self.device)
+
 
         for t in range(self.T):
             if t==0:
@@ -471,57 +485,73 @@ class RTRBM(object):
                 I_model = torch.matmul(v_model[:, t, -1], self.W.T)
                 param_t = self.grad_dReLU(I_data, I_model)
                 for i in range(len(param_t)): param[i] = param_t[i]
-                dr_db_init = self.drt(I_data, derivative='b_init')
+                dr_db_init_p = self.drt(I_data, derivative='b_init_p')
+                dr_db_init_m = self.drt(I_data, derivative='b_init_m')
 
             elif t>0:
                 I_data = torch.matmul(v_data[:, t], self.W.T)
                 I_model = torch.matmul(v_model[:, t, -1], self.W.T)
-                param_t = self.grad_dReLU(I_data, I_model, rtd[:, t-1], mean_rtm[:, t-1])
+
+                param_t = self.grad_dReLU(I_data, I_model, rt_p_data[:, t-1], rt_m_data[:, t-1], mean_r_p_model[:, t-1], mean_r_m_model[:, t-1])
+
                 for i in range(len(param_t)): param[i] += param_t[i]
 
-            dr_dtheta_p[:, t] = self.drt(I_data, derivative='theta_p')
-            dr_dtheta_m[:, t] = self.drt(I_data, derivative='theta_m')
-            dr_dgamma_p[:, t] = self.drt(I_data, derivative='gamma_p')
-            dr_dgamma_m[:, t] = self.drt(I_data, derivative='gamma_m')
+            drp_dtheta_p[:, t] = self.drt(I_data, derivative='theta_p')
+            drp_dgamma_p[:, t] = self.drt(I_data, derivative='gamma_p')
 
-            drt_drt_min_1[:, t] = self.drt(I_data, derivative='rt')
-            dr_dU[:, t] = self.drt(I_data, derivative='U')
-            dr_dW[:, t] = self.drt(I_data, derivative='W')
+            drm_dtheta_m[:, t] = self.drt(I_data, derivative='theta_m')
+            drm_dgamma_m[:, t] = self.drt(I_data, derivative='gamma_m')
+
+            drtp_drtp_min_1[:, t] = self.drt(I_data, derivative='rt')
+            drtm_drtm_min_1[:, t] = self.drt(I_data, derivative='rt')
+
+            drp_dU_p[:, t] = self.drt(I_data, derivative='U_p')
+            drm_dU_m[:, t] = self.drt(I_data, derivative='U_m')
+            drp_dW[:, t] = self.drt(I_data, derivative='Wp')
+            drm_dW[:, t] = self.drt(I_data, derivative='Wm')
 
         dtheta_p, dtheta_m, dgamma_p, dgamma_m = param
 
         # Backpropagation
-        Dt = torch.zeros(self.N_H, self.T + 1, dtype=self.dtype, device=self.device)
+        Dt_p = torch.zeros(self.N_H, self.T + 1, dtype=self.dtype, device=self.device)
+        Dt_m = torch.zeros(self.N_H, self.T + 1, dtype=self.dtype, device=self.device)
 
         for t in range(self.T - 1, -1, -1): # begin, stop, step
-            Dt[:, t] = torch.matmul(self.U.T, (Dt[:, t + 1] * drt_drt_min_1[:, t] + (rtd[:, t] - mean_rtm[:, t])))
+            Dt_p[:, t] = torch.matmul(self.U_p.T, (Dt_p[:, t + 1] * drtp_drtp_min_1[:, t] + (rt_p_data[:, t] - mean_r_p_model[:, t]) ))
+            Dt_m[:, t] = torch.matmul(self.U_m.T, (Dt_m[:, t + 1] * drtm_drtm_min_1[:, t] + (rt_m_data[:, t] - mean_r_m_model[:, t]) ))
 
         # Gradients for HU potential
-        dtheta_p += torch.sum(Dt[:, 2:self.T] * dr_dtheta_p[:, 1:self.T - 1])
-        dtheta_m += torch.sum(Dt[:, 2:self.T] * dr_dtheta_m[:, 1:self.T - 1])
-        dgamma_p += torch.sum(Dt[:, 2:self.T] * dr_dgamma_p[:, 1:self.T - 1])
-        dgamma_m += torch.sum(Dt[:, 2:self.T] * dr_dgamma_m[:, 1:self.T - 1])
+        dtheta_p += torch.sum(Dt_p[:, 2:self.T] * drp_dtheta_p[:, 1:self.T - 1])
+        dgamma_p += torch.sum(Dt_p[:, 2:self.T] * drp_dgamma_p[:, 1:self.T - 1])
+
+        dtheta_m += torch.sum(Dt_m[:, 2:self.T] * drm_dtheta_m[:, 1:self.T - 1])
+        dgamma_m += torch.sum(Dt_m[:, 2:self.T] * drm_dgamma_m[:, 1:self.T - 1])
 
         # Gradient initial bias
-        db_init = (rtd[:, 0] - mean_rtm[:, 0]) + Dt[:, 1] * dr_db_init
+        db_init_p = (rt_p_data[:, 0] - mean_r_p_model[:, 0]) + Dt_p[:, 1] * drp_db_init_p
+        db_init_m = (rt_m_data[:, 0] - mean_r_m_model[:, 0]) + Dt_m[:, 1] * drp_db_init_m
 
         # Gradient for visible field
         db_V = torch.sum(v_data - mean_vtm, 1)
 
         # Gradient for W
         dW_1 = torch.sum(
-            (Dt[:, 1:self.T] * dr_dW[:, 0:self.T-1]).unsqueeze(1).repeat(1, self.N_V, 1) *
+            (Dt_p[:, 1:self.T] * drp_dW[:, 0:self.T-1]).unsqueeze(1).repeat(1, self.N_V, 1) *
             v_data[:, 0:self.T - 1].unsqueeze(0).repeat(self.N_H, 1, 1), 2)
 
-        dW_2 = torch.sum(rtd.unsqueeze(1).repeat(1, self.N_V, 1) * v_data.unsqueeze(0).repeat(self.N_H, 1, 1), 2) - \
+        dW_2 = torch.sum(
+            (Dt_m[:, 1:self.T] * drm_dW[:, 0:self.T - 1]).unsqueeze(1).repeat(1, self.N_V, 1) *
+            v_data[:, 0:self.T - 1].unsqueeze(0).repeat(self.N_H, 1, 1), 2)
+
+        dW_3 = torch.sum(rtd.unsqueeze(1).repeat(1, self.N_V, 1) * v_data.unsqueeze(0).repeat(self.N_H, 1, 1), 2) - \
                torch.sum(
                    torch.sum(h_model.unsqueeze(1).repeat(1, self.N_V, 1, 1) * v_model.unsqueeze(0).repeat(self.N_H, 1, 1, 1),
                              3), 2) / CDk
         dW = dW_1 + dW_2
 
         # Gradient for U
-        dU = torch.sum((Dt[:, 2:self.T + 1] * (dr_dU[:, 1:self.T]) + rtd[:, 1:self.T] - mean_rtm[:, 1:self.T]).unsqueeze(
-            1).repeat(1, self.N_H, 1) * rtd[:, 0:self.T - 1].unsqueeze(0).repeat(self.N_H, 1, 1), 2)
+        dU_p = torch.sum((Dt_p[:, 2:self.T + 1] * (drp_dU_p_dU[:, 1:self.T]) + rt_p_data[:, 1:self.T] - mean_r_p_model[:, 1:self.T]).unsqueeze(
+            1).repeat(1, self.N_H, 1) * rt_p_data[:, 0:self.T - 1].unsqueeze(0).repeat(self.N_H, 1, 1), 2)
 
         if torch.sum(torch.isnan(dtheta_p)):
             a = 1
