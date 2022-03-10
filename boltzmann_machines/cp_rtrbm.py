@@ -18,7 +18,7 @@ class RTRBM(object):
         else:
             self.device = device
         self.dtype = torch.float
-        self.V = data.float().to(self.device)
+        self.V = data
         self.dim = torch.tensor(self.V.shape).shape[0]
         if self.dim == 2:
             self.N_V, self.T = self.V.shape
@@ -39,7 +39,10 @@ class RTRBM(object):
         if debug_mode:
             self.parameter_history = []
 
-    def learn(self, n_epochs=1000, lr=None, lr_schedule=None, lr_regulisor=None, batch_size=128, CDk=10, PCD=False, sp=None, x=2, mom=0.9, wc=0.0002, AF=torch.sigmoid, disable_tqdm=False, **kwargs):
+        self.Dparams = self.initialize_grad_updates()
+
+    def learn(self, n_epochs=1000, lr=None, lr_schedule=None, lr_regulisor=1, batch_size=128, CDk=10, PCD=False, sp=None, x=2, mom=0.9, wc=0.0002, AF=torch.sigmoid, disable_tqdm=False, save_every_n_epochs=1,
+              **kwargs):
         if self.dim == 2:
             num_batches = 1
             batch_size = 1
@@ -49,7 +52,7 @@ class RTRBM(object):
             lrs = lr_regulisor * np.array(get_lrs(mode=lr_schedule, n_epochs=n_epochs, **kwargs))
         else:
             lrs = lr * torch.ones(n_epochs)
-        Dparams = self.initialize_grad_updates()
+
         self.errors = torch.zeros(n_epochs, 1)
         self.disable = disable_tqdm
         self.lrs = lrs
@@ -59,9 +62,9 @@ class RTRBM(object):
                 self.dparams = self.initialize_grad_updates()
                 for i in range(0, batch_size):
                     if self.dim == 2:
-                        vt = self.V
+                        vt = self.V.to(self.device)
                     elif self.dim == 3:
-                        vt = self.V[:, :, batch * batch_size + i]
+                        vt = self.V[:, :, batch * batch_size + i].to(self.device)
                     rt = self.visible_to_expected_hidden(vt, AF=AF)
                     if PCD and epoch != 0:
                         barht, barvt, ht_k, vt_k = self.CD(vt_k[:, :, -1], rt, CDk, AF=AF)
@@ -70,10 +73,11 @@ class RTRBM(object):
                     err += torch.sum((vt - vt_k[:, :, -1]) ** 2)
                     dparam = self.grad(vt, rt, ht_k, vt_k, barvt, barht, CDk)
                     for i in range(len(dparam)): self.dparams[i] += dparam[i] / batch_size
-                Dparams = self.update_grad(Dparams, lr=lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
+                self.update_grad(lr=lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
             self.errors[epoch] = err / self.V.numel()
-            if self.debug_mode:
-                self.parameter_history.append([param.detach().clone() for param in self.params])
+            if self.debug_mode and epoch % save_every_n_epochs == 0:
+                self.parameter_history.append([param.detach().clone().cpu() for param in self.params])
+        self.r = rt
 
     def return_params(self):
         return [self.W, self.U, self.b_V, self.b_init, self.b_H, self.errors]
@@ -126,9 +130,9 @@ class RTRBM(object):
         dU = torch.sum((Dt[:, 2:self.T + 1] * (rt[:, 1:self.T] * (1 - rt[:, 1:self.T])) + rt[:, 1:self.T] - barht[:, 1:self.T]).unsqueeze(1).repeat(1, self.N_H, 1) * rt[:, 0:self.T - 1].unsqueeze(0).repeat(self.N_H, 1, 1), 2)
         return [dW, dU, db_H, db_V, db_init]
 
-    def update_grad(self, Dparams, lr=1e-3, mom=0, wc=0, x=2, sp=None):
+    def update_grad(self, lr=1e-3, mom=0, wc=0, x=2, sp=None):
         dW, dU, db_H, db_V, db_init = self.dparams
-        DW, DU, Db_H, Db_V, Db_init = Dparams
+        DW, DU, Db_H, Db_V, Db_init = self.Dparams
         DW = mom * DW + lr * (dW - wc * self.W)
         DU = mom * DU + lr * (dU - wc * self.U)
         Db_H = mom * Db_H + lr * db_H
@@ -138,9 +142,9 @@ class RTRBM(object):
             DW -= sp * torch.reshape(torch.sum(torch.abs(self.W), 1).repeat(self.N_V), [self.N_H, self.N_V]) ** (x - 1) * torch.sign(self.W)
         if self.no_bias:
             Db_H, Db_V, Db_init = 0, 0, 0
-        Dparams = [DW, DU, Db_H, Db_V, Db_init]
-        for i in range(len(self.params)): self.params[i] += Dparams[i]
-        return [DW, DU, Db_H, Db_V, Db_init]
+        self.Dparams = [DW, DU, Db_H, Db_V, Db_init]
+        for i in range(len(self.params)): self.params[i] += self.Dparams[i]
+        return
 
     def sample(self, v_start, AF=torch.sigmoid, chain=50, pre_gibbs_k=100, gibbs_k=20, mode=1, disable_tqdm=False):
         vt = torch.zeros(self.N_V, chain + 1, dtype=self.dtype, device=self.device)
