@@ -463,7 +463,7 @@ def plot_weights_heatmap_sum_abs(weights, print_sparsity=False, th=1e-3):
               float(((weights.ravel() < th) & (weights.ravel() > -th)).sum() / (weights.shape[0] * weights.shape[1])))
 
 
-def animation_weight_per_epoch(file_dir, param='W'):
+def animation_param_per_epoch(file_dir, param='W'):
 
     rtrbm = torch.load(open(file_dir, 'rb'), map_location='cpu')
 
