@@ -463,17 +463,39 @@ def plot_weights_heatmap_sum_abs(weights, print_sparsity=False, th=1e-3):
               float(((weights.ravel() < th) & (weights.ravel() > -th)).sum() / (weights.shape[0] * weights.shape[1])))
 
 
-def animation_VH_HH_per_epoch(VH, HH):
-    n_epochs = VH.shape[2]
-    snapshots_VH = [VH[:, :, i] for i in range(n_epochs)]
-    snapshots_HH = [HH[:, :, i] for i in range(n_epochs)]
+def animation_weight_per_epoch(file_dir, param='W'):
 
-    # plt.clf()
-    fig, axes = plt.subplots(2, 1, figsize=(6, 9))
-    im_VH = axes[0].imshow(snapshots_VH[0], interpolation='none', aspect='auto',
-                           vmin=VH.ravel().min(), vmax=VH.ravel().max())
-    im_HH = axes[1].imshow(snapshots_HH[0], interpolation='none', aspect='auto',
-                           vmin=VH.ravel().min(), vmax=VH.ravel().max())
+    rtrbm = torch.load(open(file_dir, 'rb'), map_location='cpu')
+
+    if param == 'W':
+        X = rtrbm.parameter_history[0]
+    if param == 'U':
+        X = rtrbm.parameter_history[1]
+    if param == 'b_H':
+        X = rtrbm.parameter_history[2]
+    if param == 'b_V':
+        X = rtrbm.parameter_history[3]
+    if param == 'b_init':
+        X = rtrbm.parameter_history[4]
+
+    if param == 'W' or 'U':
+        n_epochs = X.shape[2]
+        snapshots_X = [X[:, :, i] for i in range(n_epochs)]
+
+        # plt.clf()
+        fig, axes = plt.subplots(2, 1, figsize=(6, 9))
+        im_X = axes[0].imshow(snapshots_X[0], interpolation='none', aspect='auto',
+                              vmin=X.ravel().min(), vmax=X.ravel().max())
+
+    else:
+        n_epochs = X.shape[1]
+        snapshots_X = [X[:, i] for i in range(n_epochs)]
+
+        # plt.clf()
+        fig, axes = plt.subplots(2, 1, figsize=(6, 9))
+        im_X = axes[0].bar(np.arange(snapshots_X[0].shape[0]), snapshots_X[0], interpolation='none', aspect='auto',
+                              vmin=X.ravel().min(), vmax=X.ravel().max())
+
 
     # add another axes at the top left corner of the figure
     axtext = fig.add_axes([0.0, 0.95, 0.1, 0.05])
@@ -481,23 +503,15 @@ def animation_VH_HH_per_epoch(VH, HH):
     axtext.axis("off")
 
     time = axtext.text(0.5, 0.5, str(0), ha="left", va="top")
-    time1 = axtext.text(0.5, -18, str(0), ha="left", va="bottom")
 
     axes[0].set_xlabel('Hiddens')
     axes[0].set_ylabel('Visibles')
-    axes[0].set_title('VH')
-
-    axes[1].set_xlabel('Hiddens')
-    axes[1].set_ylabel('Hiddens')
-    axes[1].set_title('HH')
+    axes[0].set_title(param)
 
     def animate_func(i):
-        im_VH.set_array(snapshots_VH[i])
-        im_HH.set_array(snapshots_HH[i])
+        im_X.set_array(snapshots_X[i])
         time.set_text(str(i))
-        time1.set_text(str(i))
-
-        return [im_VH, im_HH, time, time1]
+        return [im_X, time]
 
     ani = animation.FuncAnimation(
         fig,
