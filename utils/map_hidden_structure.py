@@ -4,6 +4,14 @@ from utils.funcs import get_hidden_mean_receptive_fields as rf
 import torch
 
 
+def receptive_fields(weights, coordinates, only_max_conn=True):
+    if only_max_conn:
+        idx = torch.abs(weights) == torch.max(torch.abs(weights), 0)[0]
+        return (torch.matmul(torch.abs(weights) * idx, coordinates).T / torch.sum(torch.abs(weights * idx), 1)).T
+    else:
+        return (torch.matmul(torch.abs(weights), coordinates).T / torch.sum(torch.abs(weights), 1)).T
+
+
 class MapHiddenStructure(object):
     def __init__(self, W=None, U=None, rtrbm=None, dir=None, coordinates=None):
         if W is not None:
@@ -33,7 +41,7 @@ class MapHiddenStructure(object):
                     y[pop] + .2 * torch.sin(.5 * theta[1]) * torch.randn(self.n_v_pop)
         self.coordinates = coordinates
 
-        self.rf = self.receptive_fields()
+        self.rf = receptive_fields(self.W, self.coordinates)
 
     def draw_final_structure(self, hidden_weight_threshold=.5, r=.1, vr=2, save=False, path='', ax=None):
         if ax is None:
@@ -85,23 +93,9 @@ class MapHiddenStructure(object):
                 plt.savefig(path, dpi=500)
         return ax
 
-    def receptive_fields(self, coordinates=None, weights=None):
-        if weights is None:
-            weights = self.W
-        if coordinates is None:
-            coordinates = self.coordinates
-        return (torch.matmul(torch.abs(weights), coordinates).T / torch.sum(torch.abs(weights), 1)).T
-
 
 if __name__ == '__main__':
-    n_v, n_h = (100, 10)
-    n_v_pop = n_v // n_h
-    W = torch.zeros(n_h, n_v)
-    U = torch.randn(n_h, n_h)
-    for pop in range(n_h):
-        W[pop, pop * n_v_pop:(pop + 1) * n_v_pop] = 1
-
-    x = MapHiddenStructure(W=W, U=U)
-    plt.figure(dpi=200)
-    ax = x.draw_final_structure(ax=plt.gca())
+    dir = '../data/artificial data/rtrbm.pt'
+    x = MapHiddenStructure(dir=dir)
+    ax = x.draw_final_structure()
     plt.show()
