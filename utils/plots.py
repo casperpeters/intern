@@ -9,6 +9,29 @@ import matplotlib.animation as animation
 import matplotlib.colors as colors
 from scipy.stats import gaussian_kde
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import Normalize
+from scipy.interpolate import interpn
+from matplotlib import cm
+from utils.funcs import get_param_history
+
+
+def plot_mean_std_param_history(parameter_history):
+    """
+    Plots the mean and standard deviation of every parameter over epochs
+    """
+    W, U, b_H, b_V, b_init = get_param_history(parameter_history)
+    epochs = np.arange(W.shape[0])
+    fig, axes = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+    params = [W, U, b_H, b_V, b_init]
+    for param in params:
+        axes[0].plot(epochs, torch.mean(param, (1, 2)))
+        axes[1].plot(epochs, torch.std(param, (1, 2)))
+    axes[0].legend(['W', 'U', 'b_H', 'b_V', 'b_init'])
+    axes[0].set_ylabel('Means', fontsize=15)
+    axes[1].set_ylabel('STDs', fontsize=15)
+    axes[1].set_xlabel('epochs', fontsize=15)
+    plt.tight_layout()
+    plt.show()
 
 
 def plot_weights(W, W_acc, figsize=(10, 4)):
@@ -770,3 +793,35 @@ def plot_compare_moments(rbm, rtrbm, train_data, test_data, MC_chains=300, chain
     plt.show()
 
     return
+
+
+def density_scatter(x , y, ax = None, fig=None, r=None, sort = True, bins = 20, **kwargs )   :
+    """
+    Scatter plot colored by 2d histogram
+    """
+    if ax is None :
+        fig , ax = plt.subplots()
+    data , x_e, y_e = np.histogram2d( x, y, bins = bins, density = True )
+    z = interpn( ( 0.5*(x_e[1:] + x_e[:-1]) , 0.5*(y_e[1:]+y_e[:-1]) ) , data , np.vstack([x,y]).T , method = "splinef2d", bounds_error = False)
+
+    #To be sure to plot all data
+    z[np.where(np.isnan(z))] = 0.0
+
+    # Sort the points by density, so that the densest points are plotted last
+    if sort :
+        idx = z.argsort()
+        x, y, z = x[idx], y[idx], z[idx]
+
+    ax.scatter( x, y, c=z, s=2, **kwargs )
+
+    norm = Normalize(vmin = np.min(z), vmax = np.max(z))
+    cbar = fig.colorbar(cm.ScalarMappable(norm = norm), ax=ax)
+    cbar.ax.set_ylabel('Density')
+    ax.plot([0, 1], [0, 1], ':')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    ax.text(.1, .85, 'r-value: {:.2f}'.format(r))
+
+    return ax
