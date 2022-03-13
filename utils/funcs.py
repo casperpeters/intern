@@ -174,6 +174,28 @@ def get_hidden_mean_receptive_fields(weights, coordinates, only_max_conn=False):
     return rf
 
 
+def get_param_history(parameter_history):
+    """
+    Returns parameter history per parameter as torch tensor
+    """
+    epochs = len(parameter_history)
+    N_H, N_V = np.shape(parameter_history[0][0])
+    W = torch.empty(epochs, N_H, N_V)
+    U = torch.empty(epochs, N_H, N_H)
+    b_V = torch.empty(epochs, 1, N_V)
+    b_H = torch.empty(epochs, 1, N_H)
+    b_init = torch.empty(epochs, 1, N_H)
+
+    for ep, params in enumerate(parameter_history):
+        W[ep] = params[0].clone().detach()
+        U[ep] = params[1].clone().detach()
+        b_H[ep] = params[2].clone().detach()
+        b_V[ep] = params[3].clone().detach()
+        b_init[ep] = params[4].clone().detach()
+
+    return W, U, b_H, b_V, b_init
+
+
 from scipy.stats.distributions import chi2
 
 

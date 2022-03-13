@@ -119,6 +119,7 @@ def density_plot_moments(vt_mean, vs_mean, ht_mean, hs_mean, vvt, vvs, hht, hhs,
 
 
 if __name__ == '__main__':
+    from plots import plot_true_sampled
     spikes, behavior, coordinates, df, stimulus = load_data(
         '/mnt/data/zebrafish/chen2018/subject_1/Deconvolved/subject_1_reconv_spikes.h5')
     # sort spikes by ascending firing rate
@@ -131,3 +132,5 @@ if __name__ == '__main__':
     # split in 80 train batches and 20 test batches
     train, test = train_test_split(data[:50000, :], train_batches=80, test_batches=20)
     vt, vs, ht, hs = infer_and_get_moments_plot('../data/full brain/full_brain_wrong.pt', test)
+    plot_true_sampled(vt[:1000, :], ht, vs[:1000, :], hs)
+    plt.show()

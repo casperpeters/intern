@@ -1,7 +1,8 @@
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arc, RegularPolygon
-from utils.funcs import get_hidden_mean_receptive_fields as rf
+from matplotlib.animation import FuncAnimation
 import torch
+import numpy as np
 
 
 def receptive_fields(weights, coordinates, only_max_conn=True):
@@ -23,6 +24,7 @@ class MapHiddenStructure(object):
         if rtrbm is not None:
             self.W = rtrbm.W
             self.U = rtrbm.U
+            self.parameter_history = rtrbm.parameter_history
 
         self.cmap = plt.get_cmap('tab20')
 
@@ -43,13 +45,27 @@ class MapHiddenStructure(object):
 
         self.rf = receptive_fields(self.W, self.coordinates)
 
-    def draw_final_structure(self, hidden_weight_threshold=.5, r=.1, vr=2, save=False, path='', ax=None):
+    def draw_final_structure(self):
+        ax = self.draw_structure(self.W, self.U)
+        return ax
+
+    def draw_structure_evolution(self, fig=None, ax=None, save=False, path=''):
+        if fig is None and ax in None:
+            fig, ax = plt.subplots()
+        ani = FuncAnimation(fig, self.update, frames=len(self.parameter_history))
+        return ax
+
+    def update(self, frame):
+        ax = self.draw_structure(self.parameter_history[frame][0], self.parameter_history[frame][0])
+        return ax
+
+    def draw_structure(self, W, U, hidden_weight_threshold=.5, r=.1, vr=2, save=False, path='', ax=None):
         if ax is None:
             ax = plt.subplot()
 
         theta = torch.deg2rad(torch.tensor(200))
-        max_hidden_connection = torch.max(torch.abs(self.W), 0)[1]
-        U_norm = self.U / torch.max(self.U)
+        max_hidden_connection = torch.max(torch.abs(W), 0)[1]
+        U_norm = U / torch.max(U)
 
         for h, (x, y) in enumerate(self.rf):
             # draw visible neurons as dots
@@ -95,6 +111,7 @@ class MapHiddenStructure(object):
 
 
 if __name__ == '__main__':
+    from map_hidden_structure import MapHiddenStructure
     dir = '../data/artificial data/rtrbm.pt'
     x = MapHiddenStructure(dir=dir)
     ax = x.draw_final_structure()
