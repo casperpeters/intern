@@ -42,7 +42,17 @@ class RTRBM(object):
         self.Dparams = self.initialize_grad_updates()
         self.errors = []
 
-    def learn(self, n_epochs=1000, lr=None, lr_schedule=None, lr_regulisor=1, batch_size=128, CDk=10, PCD=False, sp=None, x=2, mom=0.9, wc=0.0002, AF=torch.sigmoid, disable_tqdm=False, save_every_n_epochs=1,
+    def learn(self, n_epochs=1000,
+              lr=None,
+              lr_schedule=None,
+              batch_size=1,
+              CDk=10,
+              PCD=False,
+              sp=None, x=2,
+              mom=0.9, wc=0.0002,
+              AF=torch.sigmoid,
+              disable_tqdm=False,
+              save_every_n_epochs=1,
               **kwargs):
         if self.dim == 2:
             num_batches = 1
@@ -50,7 +60,7 @@ class RTRBM(object):
         elif self.dim == 3:
             num_batches = self.num_samples // batch_size
         if lr is None:
-            lrs = lr_regulisor * np.array(get_lrs(mode=lr_schedule, n_epochs=n_epochs, **kwargs))
+            lrs = np.array(get_lrs(mode=lr_schedule, n_epochs=n_epochs, **kwargs))
         else:
             lrs = lr * torch.ones(n_epochs)
 
@@ -70,7 +80,7 @@ class RTRBM(object):
                         barht, barvt, ht_k, vt_k = self.CD(vt_k[:, :, -1], rt, CDk, AF=AF)
                     else:
                         barht, barvt, ht_k, vt_k = self.CD(vt, rt, CDk, AF=AF)
-                    err += torch.sum((vt - vt_k[:, :, -1]) ** 2)
+                    err += torch.sum((vt - vt_k[:, :, -1]) ** 2).cpu()
                     dparam = self.grad(vt, rt, ht_k, vt_k, barvt, barht, CDk)
                     for i in range(len(dparam)): self.dparams[i] += dparam[i] / batch_size
                 self.update_grad(lr=lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
