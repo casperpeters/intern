@@ -10,8 +10,11 @@ import matplotlib.pyplot as plt
 from data.load_data import load_data
 
 
-def infer_and_get_moments_plot(dir, test, pre_gibbs_k=0, gibbs_k=1, mode=1, n=1000, m=50000):
-    rtrbm = torch.load(dir, map_location='cpu')
+def infer_and_get_moments_plot(dir=None, rtrbm=None, test=None, pre_gibbs_k=0, gibbs_k=1, mode=1, n=1000, m=50000):
+    if dir is not None:
+        rtrbm = torch.load(dir, map_location='cpu')
+    if test is None:
+        test = rtrbm.V
 
     rtrbm.device = 'cpu'
 
