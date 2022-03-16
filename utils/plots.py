@@ -14,6 +14,19 @@ from scipy.interpolate import interpn
 from matplotlib import cm
 from utils.funcs import get_param_history
 
+
+def hist_strongest_weights(weights, threshold, ax=None):
+    if ax is None:
+        ax = plt.subplot()
+
+    connectivity = torch.sum(weights > threshold, 0)
+    n, counts = torch.unique(connectivity, return_counts=True)
+    ax.bar(n, counts / torch.sum(counts))
+    ax.set_xlabel('# Strong weights per neuron', fontsize=15)
+    ax.set_ylabel('PDF', fontsize=15)
+    return ax
+
+
 def plot_mean_std_param_history(parameter_history):
     """
     Plots the mean and standard deviation of every parameter over epochs
@@ -567,7 +580,7 @@ def animation_param_per_epoch(file_dir, param='W'):
         snapshots_X = [X[:, :, i] for i in range(n_epochs)]
 
         # plt.clf()
-        fig, axes = plt.subplots(1, 1, figsize=(6, 9))
+        fig, axes = plt.subplots(2, 1, figsize=(6, 9))
         im_X = axes[0].imshow(snapshots_X[0], interpolation='none', aspect='auto',
                               vmin=X.ravel().min(), vmax=X.ravel().max())
 
@@ -576,7 +589,7 @@ def animation_param_per_epoch(file_dir, param='W'):
         snapshots_X = [X[:, i] for i in range(n_epochs)]
 
         # plt.clf()
-        fig, axes = plt.subplots(1, 1, figsize=(6, 9))
+        fig, axes = plt.subplots(2, 1, figsize=(6, 9))
         im_X = axes[0].bar(np.arange(snapshots_X[0].shape[0]), snapshots_X[0], interpolation='none', aspect='auto',
                               vmin=X.ravel().min(), vmax=X.ravel().max())
 
