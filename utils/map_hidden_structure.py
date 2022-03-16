@@ -24,7 +24,8 @@ class MapHiddenStructure(object):
         if rtrbm is not None:
             self.W = rtrbm.W
             self.U = rtrbm.U
-            self.parameter_history = rtrbm.parameter_history
+            if rtrbm.debug_mode:
+                self.parameter_history = rtrbm.parameter_history
 
         self.cmap = plt.get_cmap('tab20')
 

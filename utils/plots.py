@@ -14,7 +14,6 @@ from scipy.interpolate import interpn
 from matplotlib import cm
 from utils.funcs import get_param_history
 
-
 def plot_mean_std_param_history(parameter_history):
     """
     Plots the mean and standard deviation of every parameter over epochs
@@ -34,25 +33,26 @@ def plot_mean_std_param_history(parameter_history):
     plt.show()
 
 
-def plot_weights(W, W_acc, figsize=(10, 4)):
-    fig, axes = plt.subplots(1, 2, figsize=figsize)
-    vmin = torch.min(torch.cat((W, W_acc), 1))
-    vmax = torch.max(torch.cat((W, W_acc), 1))
-    sns.heatmap(W, ax=axes[0], vmin=vmin, vmax=vmax, cbar=False)
-    sns.heatmap(W_acc, ax=axes[1], vmin=vmin, vmax=vmax)
+def plot_weights(W, U, figsize=(10, 4)):
 
-    axes[0].set_title('$W$', fontsize=20)
-    axes[0].set_xlabel('$v^{[t]}$', color='#C55A11', fontsize=15)
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    sns.heatmap(W, ax=axes[0])
     axes[0].set_ylabel('$h^{[t]}$', color='#2F5597', fontsize=15, rotation=0, labelpad=25)
+    axes[0].set_xlabel('$v^{[t]}$', color='#C55A11', fontsize=15)
+    axes[0].set_title('$W$', fontsize=20)
+    # axes[0].tick_params(axis='both', which='major', labelsize=10)
     axes[0].xaxis.set_ticks([])
     axes[0].yaxis.set_ticks([])
 
-    axes[1].set_title('$U$', fontsize=20)
+    sns.heatmap(U, ax=axes[1])
+    # axes[1].set_xlabel('$h^{[t]}$', color='#2F5597', fontsize=15)
     axes[1].set_xlabel('$h^{[t-1]}$', color='#2F5597', fontsize=15)
+    axes[1].set_title('$U$', fontsize=20)
+    # axes[1].tick_params(axis='both', which='major', labelsize=10)
     axes[1].xaxis.set_ticks([])
     axes[1].yaxis.set_ticks([])
-
     plt.tight_layout()
+
     return plt.gca()
 
 
@@ -67,13 +67,76 @@ def raster_plot(data, xticklabels=100, figsize=(15, 4), title='Spiking pattern')
     return plt.gca()
 
 
-def plot_reconstruction_error(errors, figsize=(8, 5)):
-    plt.figure(figsize=figsize)
-    plt.plot(errors)
-    plt.title('Reconstruction error of RTRBM during training', fontsize=15)
-    plt.xlabel('epochs', fontsize=12)
-    plt.ylabel('normalised reconstruction error', fontsize=12)
+def plot_reconstruction_error(errors, figsize=(8, 5), axes=None, fs=12, title=None):
+    if axes is None:
+        plt.figure(figsize=figsize)
+        plt.plot(errors)
+        if title is None:
+            plt.title('Reconstruction error', fontsize=1.25 * fs)
+        else:
+            plt.title(title, fontsize=1.25 * fs)
+        plt.xlabel('epochs', fontsize=fs)
+        plt.ylabel('normalised reconstruction error', fontsize=fs)
+    else:
+        axes.plot(errors)
+        if title is None:
+            axes.set_title('Reconstruction error', fontsize=1.25 * fs)
+        else:
+            axes.set_title(title, fontsize=1.25 * fs)
+        axes.set_xlabel('epochs', fontsize=fs)
+        axes.set_ylabel('normalised reconstruction error', fontsize=fs)
+
     return plt.gca()
+
+
+def plot_rtrbm_reestimate_weights(rtrbm_original, rtrbm_estimated, figsize=(10, 4)):
+    # get weights
+    W_original = rtrbm_original.W.detach().clone()
+    U_original = rtrbm_original.U.detach().clone()
+    W_estimated = rtrbm_estimated.W.detach().clone()
+    U_estimated = rtrbm_estimated.U.detach().clone()
+    N_H = U_original.shape[0]
+
+    # calculate correlation and reshuffle weights
+    corr = np.zeros((N_H, N_H))
+    shuffle_idx = np.zeros((N_H))
+    for i in range(N_H):
+        for j in range(N_H):
+            corr[i, j] = np.correlate(W_original[i, :], W_estimated[j, :])
+        shuffle_idx[i] = np.argmax(corr[i, :])
+
+    W_estimated[:, :] = W_estimated[shuffle_idx, :]
+    U_estimated[:, :] = U_estimated[shuffle_idx, :]
+    U_estimated[:, :] = U_estimated[:, shuffle_idx]
+
+    r2_W = np.corrcoef(W_estimated.ravel(), W_original.ravel())[0, 1] ** 2
+    r2_U = np.corrcoef(U_estimated.ravel(), U_original.ravel())[0, 1] ** 2
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+    axes[0].plot(W_original.ravel(), W_estimated.ravel(), 'o')
+    axes[0].plot([-2, 2], [-2, 2], ':')
+    axes[0].set_xticks([-2, 0, 2])
+    axes[0].set_yticks([-2, 0, 2])
+    axes[0].set_xlabel('Original weights', fontsize=15)
+    axes[0].set_ylabel('Estimated weights', fontsize=15)
+    axes[0].set_title('Visible to hidden weights $W$', fontsize=20)
+    mini = min(W_original.ravel().min(), W_estimated.ravel().min())
+    maxi = max(W_original.ravel().min(), W_estimated.ravel().min())
+    axes[0].text(0.6 * maxi + 0.4 * mini, 0.25 * maxi + 0.75 * mini, r'$R^2 = %.2f$' % r2_W, fontsize=15)
+
+    axes[1].plot(U_original.ravel(), U_estimated.ravel(), 'o')
+    axes[1].plot([-2, 2], [-2, 2], ':', color="grey")
+    axes[1].set_xticks([-2, 0, 2])
+    axes[1].set_yticks([-2, 0, 2])
+    axes[1].set_xlabel('Original weights', fontsize=15)
+    axes[1].set_ylabel('Estimated weights', fontsize=15)
+    axes[1].set_title('Hidden to hidden weights $U$', fontsize=20)
+    mini = min(U_original.ravel().min(), U_estimated.ravel().min())
+    maxi = max(U_original.ravel().min(), U_estimated.ravel().min())
+    axes[1].text(0.6 * maxi + 0.4 * mini, 0.25 * maxi + 0.75 * mini, r'$R^2 = %.2f$' % r2_U, fontsize=15)
+    plt.show()
+    return
 
 
 def plot_different_infer(model, data, t_start_infer=8, t_extra=0):
@@ -121,9 +184,7 @@ def plot_weights_true_reconstructed(VH_true, HH_true, VH_recon, HH_recon, normal
         HH_true /= torch.max(torch.abs(HH_true))
         VH_recon /= torch.max(torch.abs(VH_recon))
         HH_recon /= torch.max(torch.abs(HH_recon))
-    
-    
-    
+
     sns.heatmap(VH_true.T, ax=ax[0,0], cbar=True, cbar_ax=cbar_ax, vmin=-1, vmax=1)
     ax[0,0].set_xticklabels([])
     ax[0,0].set_ylabel("visible neurons")
@@ -506,7 +567,7 @@ def animation_param_per_epoch(file_dir, param='W'):
         snapshots_X = [X[:, :, i] for i in range(n_epochs)]
 
         # plt.clf()
-        fig, axes = plt.subplots(2, 1, figsize=(6, 9))
+        fig, axes = plt.subplots(1, 1, figsize=(6, 9))
         im_X = axes[0].imshow(snapshots_X[0], interpolation='none', aspect='auto',
                               vmin=X.ravel().min(), vmax=X.ravel().max())
 
@@ -515,7 +576,7 @@ def animation_param_per_epoch(file_dir, param='W'):
         snapshots_X = [X[:, i] for i in range(n_epochs)]
 
         # plt.clf()
-        fig, axes = plt.subplots(2, 1, figsize=(6, 9))
+        fig, axes = plt.subplots(1, 1, figsize=(6, 9))
         im_X = axes[0].bar(np.arange(snapshots_X[0].shape[0]), snapshots_X[0], interpolation='none', aspect='auto',
                               vmin=X.ravel().min(), vmax=X.ravel().max())
 

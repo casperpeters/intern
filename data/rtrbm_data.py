@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 from boltzmann_machines.cp_rtrbm import RTRBM
+from utils.plots import plot_weights
 
 
 def gen_W(N_H, N_V, mu=[1.5, 0.4], sig=[0.5, 0.5], rand_assign=0, size_chunk=[0.9, 1.1], f=0.5):
@@ -43,6 +44,7 @@ def gen_W(N_H, N_V, mu=[1.5, 0.4], sig=[0.5, 0.5], rand_assign=0, size_chunk=[0.
             W[h, randperm[h]] = mu[0] + sig[0] * torch.randn(size=randperm[h].shape, dtype=torch.float)
         else:
             W[h, randperm[h]] = -mu[0] + sig[0] * torch.randn(size=randperm[h].shape, dtype=torch.float)
+
     # shuffle
     mu = mu[1:]
     sig = sig[1:]
@@ -161,14 +163,17 @@ def gen_U(N_H, nabla=2, connectivity=0, std_max=40):
         raise ValueError('Try again with different W, change std, norm U, or increase connectivity')
     return U
 
-def get_rtrbm_data(N_H=5, N_V=100, # system size
-                   T=30, n_batches=300, device='cuda', pre_gibbs_k=100, gibbs_k=100, mode=1, # infer data
+
+
+def get_rtrbm_data(N_H=5, N_V=100,# system size
+                   T=30, n_batches=300, device='cpu', pre_gibbs_k=100, gibbs_k=100, mode=1, # infer data
                    mu=None, sig=None, rand_assign=None, size_chunk=None, f=None, # Generate W matrix
                    nabla=None, connectivity=None, std_max=None, # Generate U matrix
                    show_figure=True):
 
+
     if mu is None:
-        mu = [1.8, 0.2, 0.2, 0.1, 0.05, -0.05, -0.1, -0.2, -0.2]
+        mu = [1.2, 0.2, 0.2, 0.1, 0.05, -0.05, -0.1, -0.2, -0.2]
     if sig is None:
         sig = [0.5, 0.2, 0.1, 0.05, 0.05, 0.05, 0.05, 0.1, 0.2]
     if len(mu) != len(sig):
@@ -193,38 +198,25 @@ def get_rtrbm_data(N_H=5, N_V=100, # system size
     # Generate U matrix
     U = gen_U(N_H, nabla=nabla, connectivity=connectivity, std_max=std_max)
 
+
     # Plot heatmap of both matrices
     if show_figure:
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-        sns.heatmap(W, ax=axes[0])
-        axes[0].set_ylabel('$h^{[t]}$', color='#2F5597', fontsize=15, rotation=0, labelpad=25)
-        axes[0].set_xlabel('$v^{[t]}$', color='#C55A11', fontsize=15)
-        axes[0].set_title('$W$', fontsize=20)
-        # axes[0].tick_params(axis='both', which='major', labelsize=10)
-        axes[0].xaxis.set_ticks([])
-        axes[0].yaxis.set_ticks([])
+        plot_weights(W, U, figsize=(10, 4))
 
-        sns.heatmap(U, ax=axes[1])
-        # axes[1].set_xlabel('$h^{[t]}$', color='#2F5597', fontsize=15)
-        axes[1].set_xlabel('$h^{[t-1]}$', color='#2F5597', fontsize=15)
-        axes[1].set_title('$U$', fontsize=20)
-        # axes[1].tick_params(axis='both', which='major', labelsize=10)
-        axes[1].xaxis.set_ticks([])
-        axes[1].yaxis.set_ticks([])
-        plt.tight_layout()
-        plt.show()
 
-    # Generate data in batches
-    data = torch.zeros(N_V, T, dtype=torch.float)
-    rtrbm = RTRBM(data, N_H=N_H, device=device)
+    # Initialize RTRBM and data in batches
+    data = torch.zeros(N_V, T, device=device, dtype=torch.float)
+    rtrbm = RTRBM(data, N_H=N_H, device=device, no_bias=False, debug_mode=False)
+
+    data = torch.zeros(N_V, T, n_batches, dtype=torch.float)
+    rt = torch.zeros(N_H, T, n_batches)
     rtrbm.W = torch.tensor(W, device=device, dtype=torch.float)
     rtrbm.U = torch.tensor(U, device=device, dtype=torch.float)
 
-    data = torch.zeros(N_V, T, n_batches)
-    rt = torch.zeros(N_H, T, n_batches)
+    # sample data from RTRBM
     for batch in tqdm(range(n_batches)):
         v_start = (torch.rand(N_V) > 0.2) * 1.0
-        data[:, :, batch], rt[:, :, batch] = rtrbm.sample(v_start.type(torch.float).to(device),
+        data[..., batch], rt[..., batch] = rtrbm.sample(v_start.type(torch.float).to(device),
                                                           chain=T,
                                                           pre_gibbs_k=pre_gibbs_k,
                                                           gibbs_k=gibbs_k,
@@ -243,11 +235,13 @@ if __name__ == '__main__':
     rtrbm, data, rt = get_rtrbm_data(N_H=5,
                    N_V=100,
                    T=30,
-                   n_batches=10,
-                   device='cuda',
+                   n_batches=5,
+                   device='cpu',
                    pre_gibbs_k=100,
                    gibbs_k=100,
                    mode=1,
                    show_figure=True)
+    # torch.save(rtrbm, open(r'C:\Users\sebas\OneDrive\Intern\rtrbm_master\results\Reproduce_rtrbm\rtrbm_paper0', 'wb'))
+    print(torch.mean(data))
     sns.heatmap(data[:, :, 0].cpu())
     plt.show()
