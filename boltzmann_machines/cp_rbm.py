@@ -8,7 +8,7 @@ from optim.lr_scheduler import get_lrs
 x=1
 class RBM(object):
 
-    def __init__(self, data, N_H=10, device=None):
+    def __init__(self, data, N_H=10, device=None, debug_mode=False):
 
         if device is None:
             self.device = "cpu" if not torch.cuda.is_available() else "cuda:0"
@@ -46,6 +46,10 @@ class RBM(object):
         self.params = [self.W, self.b_H, self.b_V]
         self.dparams = self.initialize_grad_updates()
 
+        self.debug_mode = debug_mode
+        if debug_mode:
+            self.parameter_history = []
+
     def learn(self,
               n_epochs=1000,
               batch_size=1,
@@ -57,6 +61,7 @@ class RBM(object):
               wc=0.0002,
               AF=torch.sigmoid,
               disable_tqdm=False,
+              save_every_n_epochs=1,
               **kwargs):
 
         global vt_k
@@ -73,7 +78,7 @@ class RBM(object):
 
         Dparams = self.initialize_grad_updates()
 
-        self.errors = torch.zeros(n_epochs, 1, dtype=self.dtype, device=self.device)
+        self.errors = torch.zeros(n_epochs, 1, dtype=self.dtype)
         self.disable = disable_tqdm
 
         for epoch in tqdm(range(0, n_epochs), disable=self.disable):
@@ -98,7 +103,7 @@ class RBM(object):
                         vk, pvk, hk, phk, ph, h = self.CD(v, CDk, AF=AF)
 
                     # Accumulate error
-                    err += torch.sum((v - vk) ** 2)
+                    err += torch.sum((v - vk) ** 2).cpu()
 
                     # Backpropagation, compute gradients
                     dparam = self.grad(v, vk, ph, phk)
@@ -108,6 +113,9 @@ class RBM(object):
                 Dparams = self.update_grad(Dparams, lr=self.lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
 
             self.errors[epoch] = err / self.data.numel()
+
+            if self.debug_mode and epoch % save_every_n_epochs == 0:
+                self.parameter_history.append([param.detach().clone().cpu() for param in self.params])
 
     def CD(self, v, CDk, AF=torch.sigmoid):
 

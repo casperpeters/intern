@@ -1,10 +1,12 @@
 import h5py
 import numpy as np
 import os
+import torch
 import sys
+from data.reshape_data import train_test_split
 
 
-def load_data(data_path='None'):
+def load_data(data_path=None):
     if data_path is None:
         path = os.path.dirname(os.getcwd())
         sys.path.append(path)
@@ -30,3 +32,17 @@ def load_data_thijs():
     times = np.array(data_obj['Data']['Brain']['Times'])
 
     return spikes, coordinates, times
+
+
+def get_split_data(N_V, train_batches=80, test_batches=20):
+    spikes, behavior, coordinates, df, stimulus = load_data('/mnt/data/zebrafish/chen2018/subject_1/Deconvolved/subject_1_reconv_spikes.h5')
+
+    # sort spikes by ascending firing rate
+    firing_rates = np.mean(spikes, 1)
+    sort_idx = np.argsort(firing_rates)[::-1]
+    firing_rates_sorted = firing_rates[sort_idx]
+    data = spikes[sort_idx, :] > .15
+    data = torch.tensor(data, dtype=torch.float)
+
+    # split in 80 train batches and 20 test batches
+    return train_test_split(data[:N_V, :], train_batches=train_batches, test_batches=test_batches)
