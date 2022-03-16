@@ -15,6 +15,18 @@ from matplotlib import cm
 from utils.funcs import get_param_history
 
 
+def hist_strongest_weights(weights, threshold, ax=None):
+    if ax is None:
+        ax = plt.subplot()
+
+    connectivity = torch.sum(weights > threshold, 0)
+    n, counts = torch.unique(connectivity, return_counts=True)
+    ax.bar(n, counts / torch.sum(counts))
+    ax.set_xlabel('# Strong weights per neuron')
+    ax.set_ylabel('PDF')
+    return ax
+
+
 def plot_mean_std_param_history(parameter_history):
     """
     Plots the mean and standard deviation of every parameter over epochs
