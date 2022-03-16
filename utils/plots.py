@@ -22,8 +22,8 @@ def hist_strongest_weights(weights, threshold, ax=None):
     connectivity = torch.sum(weights > threshold, 0)
     n, counts = torch.unique(connectivity, return_counts=True)
     ax.bar(n, counts / torch.sum(counts))
-    ax.set_xlabel('# Strong weights per neuron')
-    ax.set_ylabel('PDF')
+    ax.set_xlabel('# Strong weights per neuron', fontsize=15)
+    ax.set_ylabel('PDF', fontsize=15)
     return ax
 
 
