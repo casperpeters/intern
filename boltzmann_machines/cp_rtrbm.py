@@ -40,6 +40,7 @@ class RTRBM(object):
             self.parameter_history = []
 
         self.Dparams = self.initialize_grad_updates()
+        self.errors = []
 
     def learn(self, n_epochs=1000, lr=None, lr_schedule=None, lr_regulisor=1, batch_size=128, CDk=10, PCD=False, sp=None, x=2, mom=0.9, wc=0.0002, AF=torch.sigmoid, disable_tqdm=False, save_every_n_epochs=1,
               **kwargs):
@@ -53,7 +54,6 @@ class RTRBM(object):
         else:
             lrs = lr * torch.ones(n_epochs)
 
-        self.errors = torch.zeros(n_epochs, 1)
         self.disable = disable_tqdm
         self.lrs = lrs
         for epoch in tqdm(range(0, n_epochs), disable=self.disable):
@@ -74,7 +74,7 @@ class RTRBM(object):
                     dparam = self.grad(vt, rt, ht_k, vt_k, barvt, barht, CDk)
                     for i in range(len(dparam)): self.dparams[i] += dparam[i] / batch_size
                 self.update_grad(lr=lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
-            self.errors[epoch] = err / self.V.numel()
+            self.errors += [err / self.V.numel()]
             if self.debug_mode and epoch % save_every_n_epochs == 0:
                 self.parameter_history.append([param.detach().clone().cpu() for param in self.params])
         self.r = rt
