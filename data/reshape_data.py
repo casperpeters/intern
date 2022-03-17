@@ -176,7 +176,7 @@ def reshape(data, T=None, n_batches=None):
         for i in range(n_batches):
             data1[:, :, i] = data[:, T * i:T * (i + 1)]
     else:
-        raise 'Specify n_batches and T'
+        raise ValueError('Specify n_batches and T')
 
     return data1
 

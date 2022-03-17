@@ -252,7 +252,7 @@ from scipy.stats import pearsonr
 
 
 def correlation_matrix(data):
-    # data.shape = [n, T]
+    # data.shape = [n, T]f
     population_vector = np.array(data)
     C = np.zeros((population_vector.shape[0], population_vector.shape[0]))
     for i in range(population_vector.shape[0]):
