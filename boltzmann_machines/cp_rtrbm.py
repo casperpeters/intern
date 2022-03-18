@@ -42,7 +42,7 @@ class RTRBM(object):
         self.Dparams = self.initialize_grad_updates()
         self.errors = []
 
-    def learn(self, n_epochs=1000, lr=None, lr_schedule=None, lr_regulisor=1, batch_size=128, CDk=10, PCD=False, sp=None, x=2, mom=0.9, wc=0.0002, AF=torch.sigmoid, disable_tqdm=False, save_every_n_epochs=1,
+    def learn(self, n_epochs=1000, lr=None, lr_schedule=None, lr_regulisor=1, batch_size=128, CDk=10, PCD=False, sp=None, x=2, mom=0.9, wc=0.0002, AF=torch.sigmoid, disable_tqdm=False, save_every_n_epochs=1, reshuffle_batch=True,
               **kwargs):
         if self.dim == 2:
             num_batches = 1
@@ -64,7 +64,9 @@ class RTRBM(object):
                     if self.dim == 2:
                         vt = self.V.to(self.device)
                     elif self.dim == 3:
+
                         vt = self.V[:, :, batch * batch_size + i].to(self.device)
+
                     rt = self.visible_to_expected_hidden(vt, AF=AF)
                     if PCD and epoch != 0:
                         barht, barvt, ht_k, vt_k = self.CD(vt_k[:, :, -1], rt, CDk, AF=AF)
@@ -77,6 +79,8 @@ class RTRBM(object):
             self.errors += [err / self.V.numel()]
             if self.debug_mode and epoch % save_every_n_epochs == 0:
                 self.parameter_history.append([param.detach().clone().cpu() for param in self.params])
+            if reshuffle_batch:
+                self.V[..., :] = self.V[..., torch.randperm(self.num_samples)]
         self.r = rt
 
     def return_params(self):

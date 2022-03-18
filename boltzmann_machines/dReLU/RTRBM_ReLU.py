@@ -5,15 +5,14 @@ import torch
 def phi(x):
     return torch.exp(x**2 / 2) * (1 - torch.erf(x / 2**.5)) * (torch.pi / 2)**.5
 
-
 def d_phi(x):
     return x * phi(x) - 1
 
 
 class ReLuRTRBM(object):
     def __init__(self, n_v, n_h, t):
-        self.W = .01 * torch.randn(n_h, n_v)
-        self.U = .01 * torch.randn(n_h, n_h)
+        self.W = .01/n_v * torch.randn(n_h, n_v)
+        self.U = .01/n_h * torch.randn(n_h, n_h)
         self.b_v = torch.zeros(1, n_v)
         self.b_h = torch.zeros(1, n_h)
         self.b_init = torch.zeros(1, n_h)
@@ -68,10 +67,12 @@ class ReLuRTRBM(object):
         return torch.bernoulli(torch.sigmoid(torch.matmul(self.W.T, h) + self.b_v.T))
 
     def CDk(self, v, k):
+        h = torch.zeros(self.n_h, self.T, k)
+        v = torch.zeros(self.n_v, self.T, k)
         h = self.visible_to_hidden(v)
         for kk in range(k):
-            v += self.hidden_to_visible(h)
-            h += self.visible_to_hidden(v)
+            v[..., kk] = self.hidden_to_visible(h)
+            h[..., kk] = self.visible_to_hidden(v)
         return v / (k + 1), h / (k + 1)
 
     def calculate_gradients(self, v, h):
@@ -105,7 +106,7 @@ class ReLuRTRBM(object):
         return dQtdr
 
     def drtdb_h(self, t, v):
-        y = - (self.b_h + torch.matmul(self.U, self.r[:, t]) + torch.matmul(self.W, v[:, t])) / torch.sqrt(self.gamma)
+        y = - (self.b_h.T + torch.matmul(self.U, self.r[:, t]) + torch.matmul(self.W, v[:, t])) / torch.sqrt(self.gamma.T)
         return 1 / self.gamma + d_phi(y) / (self.gamma * phi(y)**2)
 
     def drtdU(self, t, v):
@@ -124,8 +125,8 @@ if __name__ == '__main__':
     from data.mock_data import create_BB
     import seaborn as sns
 
-    data = create_BB(N_V=10, T=32, n_samples=100)
+    data = create_BB(N_V=20, T=32, n_samples=100)
     sns.heatmap(data[..., 0])
-    rtrbm = ReLuRTRBM(10, 10, 32)
+    rtrbm = ReLuRTRBM(20, 10, 32)
     rtrbm.learn(data, n_epochs=100, lr=1e-3, k=10)
 

@@ -3,6 +3,18 @@ import torch
 from tqdm import tqdm
 
 
+def set_to_device(rtrbm, device):
+    rtrbm.errors = torch.tensor(rtrbm.errors, device=device)
+    rtrbm.W = rtrbm.W.to(device)
+    rtrbm.U = rtrbm.U.to(device)
+    rtrbm.b_V = rtrbm.b_V.to(device)
+    rtrbm.b_H = rtrbm.b_H.to(device)
+    rtrbm.b_init = rtrbm.b_init.to(device)
+    rtrbm.V = rtrbm.V.to(device)
+    rtrbm.device = device
+
+    return
+
 def pairwise_moments(data1, data2):
     """Average matrix product."""
     return torch.matmul(data1, data2.T) / torch.numel(data1)
@@ -252,7 +264,7 @@ from scipy.stats import pearsonr
 
 
 def correlation_matrix(data):
-    # data.shape = [n, T]
+    # data.shape = [n, T]f
     population_vector = np.array(data)
     C = np.zeros((population_vector.shape[0], population_vector.shape[0]))
     for i in range(population_vector.shape[0]):
