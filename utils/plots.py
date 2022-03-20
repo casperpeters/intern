@@ -80,7 +80,7 @@ def raster_plot(data, xticklabels=100, figsize=(15, 4), title='Spiking pattern')
     return plt.gca()
 
 
-def plot_reconstruction_error(errors, figsize=(8, 5), axes=None, fs=12, title=None):
+def plot_reconstruction_error(errors, figsize=(5, 4), axes=None, fs=12, title=None):
     if axes is None:
         plt.figure(figsize=figsize)
         plt.plot(errors)
@@ -102,7 +102,7 @@ def plot_reconstruction_error(errors, figsize=(8, 5), axes=None, fs=12, title=No
     return plt.gca()
 
 
-def plot_rtrbm_reestimate_weights(rtrbm_original, rtrbm_estimated, figsize=(10, 4)):
+def plot_rtrbm_reestimate_weights(rtrbm_original, rtrbm_estimated, figsize=(10, 4), fs=12):
     # get weights
     W_original = rtrbm_original.W.detach().clone()
     U_original = rtrbm_original.U.detach().clone()
@@ -128,26 +128,30 @@ def plot_rtrbm_reestimate_weights(rtrbm_original, rtrbm_estimated, figsize=(10, 
     fig, axes = plt.subplots(1, 2, figsize=figsize)
 
     axes[0].plot(W_original.ravel(), W_estimated.ravel(), 'o')
-    axes[0].plot([-2, 2], [-2, 2], ':')
-    axes[0].set_xticks([-2, 0, 2])
-    axes[0].set_yticks([-2, 0, 2])
-    axes[0].set_xlabel('Original weights', fontsize=15)
-    axes[0].set_ylabel('Estimated weights', fontsize=15)
-    axes[0].set_title('Visible to hidden weights $W$', fontsize=20)
     mini = min(W_original.ravel().min(), W_estimated.ravel().min())
     maxi = max(W_original.ravel().min(), W_estimated.ravel().min())
-    axes[0].text(0.6 * maxi + 0.4 * mini, 0.25 * maxi + 0.75 * mini, r'$R^2 = %.2f$' % r2_W, fontsize=15)
+    maxi = int(max(abs(mini), abs(maxi)))
+    axes[0].text(0, -0.6 * maxi, r'$R^2 = %.2f$' % r2_W, fontsize=fs)
+    axes[0].plot([-maxi, maxi], [-maxi, maxi], ':')
+    axes[0].set_xticks([-maxi, 0, maxi])
+    axes[0].set_yticks([-maxi, 0, maxi])
+    axes[0].set_xlabel('Original weights', fontsize=fs)
+    axes[0].set_ylabel('Estimated weights', fontsize=fs)
+    axes[0].set_title('Visible to hidden weights $W$', fontsize=1.25 * fs)
+
 
     axes[1].plot(U_original.ravel(), U_estimated.ravel(), 'o')
-    axes[1].plot([-2, 2], [-2, 2], ':', color="grey")
-    axes[1].set_xticks([-2, 0, 2])
-    axes[1].set_yticks([-2, 0, 2])
-    axes[1].set_xlabel('Original weights', fontsize=15)
-    axes[1].set_ylabel('Estimated weights', fontsize=15)
-    axes[1].set_title('Hidden to hidden weights $U$', fontsize=20)
     mini = min(U_original.ravel().min(), U_estimated.ravel().min())
     maxi = max(U_original.ravel().min(), U_estimated.ravel().min())
-    axes[1].text(0.6 * maxi + 0.4 * mini, 0.25 * maxi + 0.75 * mini, r'$R^2 = %.2f$' % r2_U, fontsize=15)
+    maxi = int(max(abs(mini), abs(maxi)))
+    axes[1].text(0, -0.6 * maxi, r'$R^2 = %.2f$' % r2_U, fontsize=fs)
+    axes[1].plot([-maxi, maxi], [-maxi, maxi], ':', 'grey')
+    axes[1].set_xticks([-maxi, 0, maxi])
+    axes[1].set_yticks([-maxi, 0, maxi])
+    axes[1].set_xlabel('Original weights', fontsize=fs)
+    axes[1].set_ylabel('Estimated weights', fontsize=fs)
+    axes[1].set_title('Hidden to hidden weights $U$', fontsize=1.25 * fs)
+
     plt.show()
     return
 
@@ -382,9 +386,11 @@ def plot_moments(V_data, H_data, V_samples, H_samples):
     plt.show()
 
 
-def plot_weights_log_distribution(weights):
-    fig = sns.displot(weights.flatten(), kind='kde', log_scale=[0, 10])
-    fig.set_axis_labels('Weight value', 'PDF')
+def plot_weights_log_distribution(weights, ax=None):
+    if ax is None:
+        ax = plt.subplot()
+    sns.kdeplot(weights.flatten(), log_scale=[0, 10], ax=ax)
+    #fig.set_axis_labels('Weight value', 'PDF')
     return
 
 
