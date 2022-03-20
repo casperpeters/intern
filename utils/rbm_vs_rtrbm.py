@@ -8,13 +8,15 @@ from boltzmann_machines.cp_rbm import RBM
 from data.load_data import get_split_data
 
 
-def zebrafish_compare(path='../data/part brain',
-                      save_fig_path=None,
-                      N_V=1000, N_H=10,
-                      pre_gibbs_k=0, gibbs_k=100,
-                      train_batches=80, test_batches=20,
-                      return_machines=False,
-                      **kwargs):
+def zebrafish_compare(
+        path='../data/part brain',
+        save_fig_path=None,
+        N_V=1000, N_H=10,
+        pre_gibbs_k=0, gibbs_k=100,
+        train_batches=80, test_batches=20,
+        return_machines=False,
+        **kwargs
+):
 
     # getting the zebrafish data
     train, test = get_split_data(N_V=N_V, train_batches=train_batches, test_batches=test_batches)

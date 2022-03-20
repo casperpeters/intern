@@ -10,6 +10,17 @@ import matplotlib.pyplot as plt
 from data.load_data import load_data
 
 
+def correlations(results):
+    vt, vs, ht, hs = results
+    vvt, vvs, vht, vhs, hht, hhs = calculate_moments(vt, ht, vs, hs)
+    r_v, _ = pearsonr(torch.mean(vt, 1), torch.mean(vs, 1))
+    r_h, _ = pearsonr(torch.mean(ht, 1), torch.mean(hs, 1))
+    r_vv, _ = pearsonr(vvt, vvs)
+    r_vh, _ = pearsonr(vht, vhs)
+    r_hh, _ = pearsonr(hht, hhs)
+    return r_v, r_h, r_vv, r_vh, r_hh
+
+
 def infer_and_get_moments_plot(dir,
                                test=None,
                                pre_gibbs_k=0, gibbs_k=1, mode=1,
