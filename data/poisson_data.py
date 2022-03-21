@@ -13,16 +13,22 @@ class PoissonTimeShiftedData(object):
             time_steps_per_batch=100,
             delay=1,
             temporal_connections=None,
+            amplitude_range=None,
+            frequency_range=None,
     ):
 
         """
         """
 
         # if no temporal connections are given, take half inhibitory and half exciting populations
+        if frequency_range is None:
+            frequency_range = [2, 5]
+        if amplitude_range is None:
+            amplitude_range = [.05, .5]
         if temporal_connections is None:
             temporal_connections = torch.cat(
-                (torch.ones(n_populations, n_populations // 2),
-                 torch.full(size=(n_populations, n_populations // 2), fill_value=-1)),
+                tensors=(torch.ones(n_populations, n_populations // 2),
+                         torch.full(size=(n_populations, n_populations // 2), fill_value=-1)),
                 dim=1
             ) / (n_populations * 2)
 
@@ -49,8 +55,8 @@ class PoissonTimeShiftedData(object):
             for population_index in range(n_populations):
                 # get a random sine wave as mother train firing rate
                 population_wave = self.get_random_sine(
-                    amplitude_range=[.01, .5],
-                    frequency_range=[1, 10],
+                    amplitude_range=amplitude_range,
+                    frequency_range=frequency_range,
                     phase_range=[0, torch.pi]
                 )
 
@@ -61,17 +67,20 @@ class PoissonTimeShiftedData(object):
                 self.population_waves[population_index, :, batch_index] = population_wave
                 self.mother_trains[population_index, :, batch_index] = mother_train
 
-            batch = torch.zeros(neurons_per_population * n_populations, time_steps_per_batch)
+            # empty tensor for this batch
+            batch = torch.empty(neurons_per_population * n_populations, time_steps_per_batch)
 
-            # get spikes
+            # get spikes by looping over populations
             for population_index in range(n_populations):
+                # connections to current population
                 connections = temporal_connections[population_index, :]
                 population_waves = self.population_waves[..., batch_index]
 
                 # delete spikes based on inhibitory connections
                 inhibitory_connections = connections < 0
                 deletion_probabilities = -1 * torch.sum(
-                    input=connections[inhibitory_connections].unsqueeze(1) * population_waves[inhibitory_connections, :],
+                    input=connections[inhibitory_connections].unsqueeze(1) *
+                          population_waves[inhibitory_connections, :],
                     dim=0
                 ).T
                 delete_spikes = (torch.tile(
@@ -126,6 +135,8 @@ class PoissonTimeShiftedData(object):
             frequency_range,
             phase_range,
     ):
+        """
+        """
         amplitude = torch.rand(1) * (amplitude_range[1] - amplitude_range[0]) + amplitude_range[0]
         frequency = torch.rand(1) * (frequency_range[1] - frequency_range[0]) + frequency_range[0]
         phase = torch.rand(1) * (phase_range[1] - phase_range[0]) + phase_range[0]
@@ -133,9 +144,21 @@ class PoissonTimeShiftedData(object):
         return amplitude * torch.sin(frequency * self.t - phase) + amplitude
 
     def plot_stats(self, batch=0, axes=None):
+        """
+        plots the added, deleted and final spikes of the class of given batch. Also plots the population waves, mother
+        trains and the mean firing rates (over all batches).
+
+        Parameters
+        ----------
+        batch : int
+            to batch number of the data to plot, must be < self.n_batches
+        axes : matplotlib.pyplot.axes, optional
+            when given, uses these axes to perform the plot on, axes.shape() must be (2, 3)
+        """
         if axes is None:
             fig, axes = plt.subplots(2, 3, figsize=(20, 10))
-
+        elif axes.shape != (2, 3):
+            raise ValueError('axes must be None or of shape (2, 3)')
         sns.heatmap(self.data[..., batch], ax=axes[0, 0], cbar=False)
         axes[0, 0].set_title('Final spikes')
         sns.heatmap(self.deleted_spikes[..., batch], ax=axes[0, 1], cbar=False)
