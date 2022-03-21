@@ -10,13 +10,29 @@ import matplotlib.pyplot as plt
 from data.load_data import load_data
 
 
-def infer_and_get_moments_plot(dir=None, rtrbm=None, test=None, pre_gibbs_k=0, gibbs_k=1, mode=1, n=1000, m=50000):
-    if dir is not None:
-        rtrbm = torch.load(dir, map_location='cpu')
-    if test is None:
-        test = rtrbm.V
+def correlations(results):
+    vt, vs, ht, hs = results
+    vvt, vvs, vht, vhs, hht, hhs = calculate_moments(vt, ht, vs, hs)
+    r_v, _ = pearsonr(torch.mean(vt, 1), torch.mean(vs, 1))
+    r_h, _ = pearsonr(torch.mean(ht, 1), torch.mean(hs, 1))
+    r_vv, _ = pearsonr(vvt, vvs)
+    r_vh, _ = pearsonr(vht, vhs)
+    r_hh, _ = pearsonr(hht, hhs)
+    return r_v, r_h, r_vv, r_vh, r_hh
 
+
+def infer_and_get_moments_plot(dir,
+                               test=None,
+                               pre_gibbs_k=0, gibbs_k=1, mode=1,
+                               n=1000, m=50000,
+                               machine='rtrbm',
+                               ax=None, fig=None):
+
+    rtrbm = torch.load(dir, map_location='cpu')
     rtrbm.device = 'cpu'
+
+    if test is None:
+        test = rtrbm.V.clone().detach()
 
     vt = test.clone().detach()
     ht = torch.empty(rtrbm.N_H, rtrbm.T, test.shape[2])
@@ -24,9 +40,16 @@ def infer_and_get_moments_plot(dir=None, rtrbm=None, test=None, pre_gibbs_k=0, g
     hs = torch.empty(rtrbm.N_H, rtrbm.T, test.shape[2])
 
     for i in tqdm(range(test.shape[2])):
-        rt = rtrbm.visible_to_expected_hidden(test[:, :, i])
-        x, _ = rtrbm.visible_to_hidden(test[:, :, i], rt)
-        ht[:, :, i] = x.clone().detach()
+        if machine == 'rtrbm':
+            rt = rtrbm.visible_to_expected_hidden(test[:, :, i])
+            x, _ = rtrbm.visible_to_hidden(test[:, :, i], rt)
+            ht[:, :, i] = x.clone().detach()
+        elif machine == 'rbm':
+            x, _ = rtrbm.visible_to_hidden(test[:, :, i].T)
+            ht[:, :, i] = x.T.clone().detach()
+        else:
+            raise ValueError('Machine must be "rbm" or "rtrbm"')
+
         v, h = rtrbm.sample(test[:, 0, i], chain=test.shape[1], pre_gibbs_k=pre_gibbs_k,
                             gibbs_k=gibbs_k, mode=mode, disable_tqdm=True)
         vs[:, :, i] = v.clone().detach().cpu()
@@ -44,9 +67,8 @@ def infer_and_get_moments_plot(dir=None, rtrbm=None, test=None, pre_gibbs_k=0, g
     ht_mean = np.mean(np.array(ht), axis=1)
     hs_mean = np.mean(np.array(hs), axis=1)
 
-    ax = density_plot_moments(vt_mean, vs_mean, ht_mean, hs_mean, vvt, vvs, hht, hhs, vht, vhs)
-    plt.show()
-    return vt, vs, ht, hs
+    ax, fig = density_plot_moments(vt_mean, vs_mean, ht_mean, hs_mean, vvt, vvs, hht, hhs, vht, vhs, ax=ax, fig=fig)
+    return ax, fig, [vt, vs, ht, hs]
 
 
 def calculate_moments(vt, ht, vs, hs, n=1000, m=50000):
@@ -80,7 +102,7 @@ def calculate_moments(vt, ht, vs, hs, n=1000, m=50000):
 
 def density_scatter(x, y, ax=None, fig=None, r=None, sort=True, bins=20, **kwargs):
     if ax is None:
-        fig , ax = plt.subplots()
+        fig, ax = plt.subplots()
     data, x_e, y_e = np.histogram2d(x, y, bins=bins, density=True)
     z = interpn((0.5*(x_e[1:] + x_e[:-1]), 0.5*(y_e[1:]+y_e[:-1])), data, np.vstack([x, y]).T,
                 method="splinef2d", bounds_error=False)
@@ -111,29 +133,17 @@ def density_scatter(x, y, ax=None, fig=None, r=None, sort=True, bins=20, **kwarg
     return ax
 
 
-def density_plot_moments(vt_mean, vs_mean, ht_mean, hs_mean, vvt, vvs, hht, hhs, vht, vhs):
-    fig, axes = plt.subplots(1, 5, figsize=(30, 4))
-    density_scatter(vt_mean, vs_mean, ax=axes[0], fig=fig)
-    density_scatter(ht_mean, hs_mean, ax=axes[1], fig=fig)
-    density_scatter(vvt, vvs, ax=axes[2], fig=fig)
-    density_scatter(hht, hhs, ax=axes[3], fig=fig)
-    density_scatter(vht, vhs, ax=axes[4], fig=fig)
-    return axes
+def density_plot_moments(vt_mean, vs_mean, ht_mean, hs_mean, vvt, vvs, hht, hhs, vht, vhs, ax=None, fig=None):
+    if ax is None:
+        fig, ax = plt.subplots(1, 5, figsize=(30, 4))
+    density_scatter(vt_mean, vs_mean, ax=ax[0], fig=fig)
+    density_scatter(ht_mean, hs_mean, ax=ax[1], fig=fig)
+    density_scatter(vvt, vvs, ax=ax[2], fig=fig)
+    density_scatter(hht, hhs, ax=ax[3], fig=fig)
+    density_scatter(vht, vhs, ax=ax[4], fig=fig)
+    return ax, fig
 
 
 if __name__ == '__main__':
-    from plots import plot_true_sampled
-    spikes, behavior, coordinates, df, stimulus = load_data(
-        '/mnt/data/zebrafish/chen2018/subject_1/Deconvolved/subject_1_reconv_spikes.h5')
-    # sort spikes by ascending firing rate
-    firing_rates = np.mean(spikes, 1)
-    sort_idx = np.argsort(firing_rates)[::-1]
-    firing_rates_sorted = firing_rates[sort_idx]
-    data = spikes[sort_idx, :] > .15
-    data = torch.tensor(data, dtype=torch.float)
-
-    # split in 80 train batches and 20 test batches
-    train, test = train_test_split(data[:50000, :], train_batches=80, test_batches=20)
-    vt, vs, ht, hs = infer_and_get_moments_plot('../data/full brain/full_brain_wrong.pt', test)
-    plot_true_sampled(vt[:1000, :], ht, vs[:1000, :], hs)
+    ax, res = infer_and_get_moments_plot('../data/part brain/1000 neurons/rbm.pt', n=10000, machine='rbm')
     plt.show()
