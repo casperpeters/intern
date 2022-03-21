@@ -1,8 +1,6 @@
 """
 This is a practical file for testing quick ideas. Sebastian, please don't adjust this one :)
 """
-from torch import Tensor
-from typing import List, Union
 
 import torch
 import numpy as np
