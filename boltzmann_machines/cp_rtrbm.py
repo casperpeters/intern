@@ -50,7 +50,7 @@ class RTRBM(object):
               mom=0.9, wc=0.0002,
               AF=torch.sigmoid,
               disable_tqdm=False,
-              save_every_n_epochs=1,
+              save_every_n_epochs=1, shuffle_batch=True,
               **kwargs):
         if self.dim == 2:
             num_batches = 1
@@ -85,6 +85,8 @@ class RTRBM(object):
             self.errors += [err / self.V.numel()]
             if self.debug_mode and epoch % save_every_n_epochs == 0:
                 self.parameter_history.append([param.detach().clone().cpu() for param in self.params])
+            if shuffle_batch:
+                self.V[..., :] = self.V[..., torch.randperm(self.num_samples)]
         self.r = rt
 
     def return_params(self):
