@@ -1,12 +1,15 @@
 'Scipt for the RBM'
 
 import torch
+import numpy as np
 from tqdm import tqdm
+from optim.lr_scheduler import get_lrs
+
 
 x=1
 class RBM(object):
 
-    def __init__(self, data, N_H=10, device=None):
+    def __init__(self, data, N_H=10, device=None, debug_mode=False, save_every_n_epochs=1):
 
         if device is None:
             self.device = "cpu" if not torch.cuda.is_available() else "cuda:0"
@@ -43,27 +46,33 @@ class RBM(object):
         self.params = [self.W, self.b_H, self.b_V]
         self.dparams = self.initialize_grad_updates()
 
+        if debug_mode:
+            self.parameter_history = []
+
+        self.save_every_n_epochs = save_every_n_epochs
+        self.debug_mode= debug_mode
     def learn(self,
               n_epochs=1000,
               batchsize=1,
               CDk=10, PCD=False,
-              lr=1e-3, lr_end=None, start_decay=None,
+              lr=1e-3, lr_regulisor=1, lr_schedule=None,
               sp=None, x=2,
               mom=0.9,
               wc=0.0002,
               AF=torch.sigmoid,
-              disable_tqdm=False):
+              disable_tqdm=False, reshuffle_batch=True, **kwargs):
 
         global vt_k
         if self.dim == 1:
             num_batches = 1
             batchsize = 1
         elif self.dim == 2:
-            num_batches = self.num_samples // batchsize # same as floor // (round to the bottom)
+            num_batches = self.num_samples // batchsize
 
-        # learing rate
-        if lr and lr_end and start_decay is not None:
-            r = (lr_end / lr) ** (1 / (n_epochs - start_decay))
+        if lr is None:
+            lrs = lr_regulisor * np.array(get_lrs(mode=lr_schedule, n_epochs=n_epochs, **kwargs))
+        else:
+            lrs = lr * torch.ones(n_epochs)
 
         Dparams = self.initialize_grad_updates()
 
@@ -99,13 +108,17 @@ class RBM(object):
                     for j in range(len(dparam)): self.dparams[j] += dparam[j] / batchsize
 
                 # Update gradients
-                Dparams = self.update_grad(Dparams, lr=lr, mom=mom, wc=wc, sp=sp, x=x)
+                Dparams = self.update_grad(Dparams, lr=lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
 
             self.errors[epoch] = err / self.data.numel()
 
-            if lr and lr_end and start_decay is not None:
-                if start_decay <= epoch:
-                    lr *= r
+            if self.debug_mode and epoch % self.save_every_n_epochs == 0:
+                self.parameter_history.append([param.detach().clone().cpu() for param in self.params])
+
+            if reshuffle_batch:
+                self.data[..., :] = self.data[..., torch.randperm(self.num_samples)]
+
+
 
     def CD(self, v, CDk, AF=torch.sigmoid):
 
@@ -202,40 +215,40 @@ class RBM(object):
 
         return vt, ht
 
-"""
-# This is an example run:
-from data.reshape_data import *
-from data.mock_data import *
-import seaborn as sns
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-import matplotlib.pyplot as plt
 
-N_V, N_H, T = 16, 8, 64
-data = create_BB(N_V=N_V, T=T, n_samples=24, width_vec=[4, 5, 6, 7], velocity_vec=[2, 3], boundary=False)
-mean = torch.zeros(N_H, 20)
-std = torch.zeros(N_H, 20)
+if __name__=='__main__':
+    # This is an example run:
+    from data.reshape_data import *
+    from data.mock_data import *
+    import seaborn as sns
+    import os
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    import matplotlib.pyplot as plt
 
-rbm = RBM(data, N_H=N_H, device="cpu")
-rbm.learn(batchsize=6, n_epochs=100, lr=1e-3, mom=0, wc=0, sp=None, disable_tqdm=False)
+    N_V, N_H, T = 16, 8, 64
+    data = create_BB(N_V=N_V, T=T, n_samples=24, width_vec=[4, 5, 6, 7], velocity_vec=[2, 3], boundary=False)
+    mean = torch.zeros(N_H, 20)
+    std = torch.zeros(N_H, 20)
 
-vt_infer, rt_infer = rbm.sample(torch.tensor(data[:, T//2, 0], dtype=torch.float))
+    rbm = RBM(data, N_H=N_H, device="cpu", debug_mode=True)
+    rbm.learn(batchsize=6, n_epochs=100, lr=1e-3, lr_schedule='linear_decay', mom=0, wc=0, sp=None, disable_tqdm=False)
 
-sns.heatmap(vt_infer.cpu())
-plt.show()
+    vt_infer, rt_infer = rbm.sample(torch.tensor(data[:, T//2, 0], dtype=torch.float))
 
-plt.plot(rbm.errors.cpu())
-plt.show()
+    sns.heatmap(vt_infer.cpu())
+    plt.show()
 
-sns.heatmap(rbm.W)
-plt.show()
+    plt.plot(rbm.errors.cpu())
+    plt.show()
 
-from utils.plots import *
-N_V, T, num_samples = data.shape
-data1 = torch.zeros(N_V, T * num_samples)
-for i in range(num_samples):
-    data1[:, T * i:T * (i + 1)] = data[:, :, i]
+    sns.heatmap(rbm.W)
+    plt.show()
 
-rt, h = rbm.visible_to_hidden(data1)
-plot_effective_coupling_VH(rbm.W, data1.float(), rt.float())
-"""
+    from utils.plots import *
+    N_V, T, num_samples = data.shape
+    data1 = torch.zeros(N_V, T * num_samples)
+    for i in range(num_samples):
+        data1[:, T * i:T * (i + 1)] = data[:, :, i]
+
+    rt, h = rbm.visible_to_hidden(data1)
+    plot_effective_coupling_VH(rbm.W, data1.float(), rt.float())

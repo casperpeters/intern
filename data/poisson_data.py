@@ -11,12 +11,31 @@ class PoissonTimeShiftedData(object):
             n_populations=20,
             n_batches=200,
             time_steps_per_batch=100,
-            delay=1,
-            temporal_connections=None,
+            fr_mode='sine', delay=1, temporal_connections=None,
+            **kwargs
+
     ):
 
         """
         """
+
+        if fr_mode == 'sine':
+            if 'frequency_range' not in kwargs:
+                kwargs['frequency_range'] = [40, 400]
+            if 'amplitude_range' not in kwargs:
+                kwargs['amplitude_range'] = [.01, .5]
+            if 'phase_range' not in kwargs:
+                kwargs['phase_range'] = [0, torch.pi]
+
+        if fr_mode == 'gaussian':
+            if 'max_fr' not in kwargs:
+                kwargs['fr_range'] = [0.1, 0.8]
+            if 'mu_range' not in kwargs:
+                kwargs['mu_range'] = [0, time_steps_per_batch]
+            if 'std_range' not in kwargs:
+                kwargs['std_range'] = [4, 14]
+            if 'n_range' not in kwargs:
+                kwargs['n_range'] = [30, 200]
 
         # if no temporal connections are given, take half inhibitory and half exciting populations
         if temporal_connections is None:
@@ -26,7 +45,6 @@ class PoissonTimeShiftedData(object):
                 dim=1
             ) / (n_populations * 2)
 
-        self.t = torch.linspace(start=0, end=2 * torch.pi, steps=time_steps_per_batch)
         neuron_indexes = torch.arange(end=neurons_per_population * n_populations).view(n_populations,
                                                                                        neurons_per_population)
 
@@ -48,11 +66,10 @@ class PoissonTimeShiftedData(object):
             # get all mother trains by looping over populations
             for population_index in range(n_populations):
                 # get a random sine wave as mother train firing rate
-                population_wave = self.get_random_sine(
-                    amplitude_range=[.01, .5],
-                    frequency_range=[1, 10],
-                    phase_range=[0, torch.pi]
-                )
+                if fr_mode == 'sine':
+                    population_wave = self.get_random_sine(T=time_steps_per_batch, **kwargs)
+                elif fr_mode == 'gaussian':
+                    population_wave = self.get_random_gaussian(T=time_steps_per_batch, **kwargs)
 
                 # poisson draw mother train
                 mother_train = torch.poisson(population_wave)
@@ -120,17 +137,32 @@ class PoissonTimeShiftedData(object):
 
         self.firing_rates = torch.mean(self.data, (1, 2))
 
-    def get_random_sine(
-            self,
-            amplitude_range,
-            frequency_range,
-            phase_range,
-    ):
+    def get_random_gaussian(self, T, fr_range, mu_range, std_range, n_range):
+
+        T = np.linspace(-10, T+10, T+20)
+        def gaussian_pdf(x, mu, std):
+            pdf = 1 / (np.sqrt(np.pi) * std) * np.exp(-0.5 * ((x - mu) / std) ** 2)
+            return pdf
+
+        n_samples = int(np.random.rand(1) * (n_range[1] - n_range[0]) + n_range[0])
+
+        trace = 0
+        for i in range(n_samples):
+            trace += gaussian_pdf(T, np.random.rand(1) * (mu_range[1] - mu_range[0]) + mu_range[0],
+                              np.random.rand(1) * (std_range[1] - std_range[0]) + std_range[0])
+
+        max_fr = np.random.rand(1) * (fr_range[1] - fr_range[0]) + fr_range[0]
+
+        return torch.tensor(trace / max(trace) * max_fr)[10:-10]
+
+    def get_random_sine(self, T, amplitude_range, frequency_range, phase_range):
+
+        T = torch.linspace(start=0, end=2 * torch.pi, steps=T)
         amplitude = torch.rand(1) * (amplitude_range[1] - amplitude_range[0]) + amplitude_range[0]
         frequency = torch.rand(1) * (frequency_range[1] - frequency_range[0]) + frequency_range[0]
         phase = torch.rand(1) * (phase_range[1] - phase_range[0]) + phase_range[0]
 
-        return amplitude * torch.sin(frequency * self.t - phase) + amplitude
+        return amplitude * torch.sin(frequency * T - phase) + amplitude
 
     def plot_stats(self, batch=0, axes=None):
         if axes is None:
@@ -151,8 +183,8 @@ class PoissonTimeShiftedData(object):
         axes[1, 2].set_title('Mean firing rates (over all batches)')
         return axes
 
-
 if __name__ == '__main__':
-    x = PoissonTimeShiftedData(n_batches=1, n_populations=4)
+    x = PoissonTimeShiftedData(n_batches=1, n_populations=4, fr_mode='gaussian')
+    print(x.data.mean())
     axes = x.plot_stats()
     plt.show()
