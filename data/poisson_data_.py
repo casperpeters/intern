@@ -152,25 +152,37 @@ class PoissonTimeShiftedData(object):
         self.data[self.data > 1] = 1
         self.firing_rates = torch.mean(self.data, (1, 2))
 
+    def get_random_gaussian(self, T, dt, fr_range, mu_range, std_range, n_range, peak_spread='max', **kwargs):
 
-    def get_random_gaussian(self, T, dt, fr_range, mu_range, std_range, n_range):
-
-        T = np.arange(0, int(T/dt))
-        n_min, n_max = int(n_range[0]/dt), int(n_range[1]/dt)
-        mu_min, mu_max = mu_range[0]/dt, mu_range[1]/dt
-        std_min, std_max = std_range[0]/dt, std_range[1]/dt
+        T = np.arange(0, int(T / dt))
+        n_min, n_max = int(n_range[0] / dt), int(n_range[1] / dt)
+        mu_min, mu_max = mu_range[0] / dt, mu_range[1] / dt
+        std_min, std_max = std_range[0] / dt, std_range[1] / dt
 
         def gaussian_pdf(x, mu, std):
             pdf = 1 / (np.sqrt(np.pi) * std) * np.exp(-0.5 * ((x - mu) / std) ** 2)
             return pdf
 
-        n_samples = int(np.random.rand(1) * (n_max - n_min) + n_min)
-
-        trace = np.sum(gaussian_pdf(T[:, None], np.random.rand(1, n_samples) * (mu_max - mu_min) + mu_min,
-                              np.random.rand(1, n_samples) * (std_max - std_min) + std_min), 1)
+        if peak_spread == 'random':
+            n_samples = int(np.random.rand(1) * (n_max - n_min) + n_min)
+            trace = np.sum(gaussian_pdf(T[:, None], np.random.rand(1, n_samples) * (mu_max - mu_min) + mu_min,
+                                        np.random.rand(1, n_samples) * (std_max - std_min) + std_min), 1)
+        if peak_spread == 'max':
+            fr = np.random.rand(1) * (n_range[1] - n_range[0]) + n_range[0]
+            temp = np.random.poisson(fr, len(T))
+            n_samples = np.sum(temp)
+            mu = np.zeros(n_samples)
+            freqm = 0
+            for i, freq in enumerate(temp):
+                if freq == 0:
+                    continue
+                mu[freqm:freqm + freq] = i
+                freqm += freq
+            trace = np.sum(gaussian_pdf(T[:, None], mu,
+                                        np.random.rand(1, n_samples) * (std_max - std_min) + std_min), 1)
 
         # shift to 0
-        max_fr = np.random.rand(1) * (fr_range[1] - fr_range[0])# + fr_range[0]
+        max_fr = np.random.rand(1) * (fr_range[1] - fr_range[0])  # + fr_range[0]
         # normalize and shift to right firing range
 
         return torch.tensor(trace / max(trace) * max_fr + fr_range[0])
