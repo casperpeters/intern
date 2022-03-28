@@ -29,20 +29,19 @@ class PoissonTimeShiftedData(object):
 
         if fr_mode == 'gaussian':
             if 'fr_range' not in kwargs:
-                kwargs['fr_range'] = [5, 70]
+                kwargs['fr_range'] = [5, 40]
             if 'mu_range' not in kwargs:
                 kwargs['mu_range'] = [0, duration]  # in seconds
             if 'std_range' not in kwargs:
-                kwargs['std_range'] = [3 * dt, 9 * dt]  # in seconds
+                kwargs['std_range'] = [2 * dt, 10 * dt]  # in seconds
             if 'n_range' not in kwargs:
-                kwargs['n_range'] = [0.5, 1.5]  # average number of different gaussians per bin
-            if 'fr_width' not in kwargs:
-                kwargs['fr_width'] = [15, 25]
-            if 'std_fr_loc' not in kwargs:
-                kwargs['std_fr_loc'] = kwargs['fr_width'][0] / 2
+                kwargs['n_range'] = [0.1, 0.8]  # average number of different gaussians per bin
+            if 'lower_bound_fr_per_pop' not in kwargs:
+                kwargs['lower_bound_fr_per_pop'] = 0.05
+
 
         if corr == None:
-            corr = 0.2675 * n_populations - 0.40
+            corr = n_populations ** 2
 
         # if no temporal connections are given, take half inhibitory and half exciting populations
         if temporal_connections is None:
@@ -73,23 +72,7 @@ class PoissonTimeShiftedData(object):
         self.population_waves = torch.empty(n_populations, time_steps_per_batch, n_batches)
         self.mother_trains = torch.empty(n_populations, time_steps_per_batch, n_batches)
 
-        # evenly spaced firing rate per population with some noise std_fr_loc
-        if fr_mode == 'gaussian':
-            # lower_bound_fr_per_pop = np.random.rand(n_populations) * (kwargs['fr_range'][1]-kwargs['fr_width'][1] - kwargs['fr_range'][0]) + kwargs['fr_range'][0]
-            lower_bound_fr_per_pop = np.linspace(kwargs['fr_range'][0] + kwargs['fr_width'][1],
-                                                 kwargs['fr_range'][1] - kwargs['fr_width'][1],
-                                                 n_populations) + np.random.normal(0, kwargs['fr_width'][0] / 2,
-                                                                                   n_populations)
-            while np.sum(lower_bound_fr_per_pop > kwargs['fr_range'][1]) > 0 or np.sum(
-                    lower_bound_fr_per_pop < kwargs['fr_range'][0]) > 0:
-                lower_bound_fr_per_pop = np.linspace(kwargs['fr_range'][0] + kwargs['fr_width'][1],
-                                                     kwargs['fr_range'][1] - kwargs['fr_width'][1],
-                                                     n_populations) + np.random.normal(0, kwargs['std_fr_loc'], n_populations)
-
-            width_fr_per_pop = np.random.rand(n_populations) * (kwargs['fr_width'][1] - kwargs['fr_width'][0]) + \
-                               kwargs['fr_width'][0]
-
-        # loop over batches
+            # loop over batches
         for batch_index in range(n_batches):
 
             # get all mother trains by looping over populations
@@ -98,9 +81,7 @@ class PoissonTimeShiftedData(object):
                 if fr_mode == 'sine':
                     population_wave = self.get_random_sine(T=duration, dt=dt, **kwargs)
                 elif fr_mode == 'gaussian':
-                    kwargs['fr_range'] = [lower_bound_fr_per_pop[population_index],
-                                          lower_bound_fr_per_pop[population_index] + width_fr_per_pop[population_index]]
-                    population_wave = self.get_random_gaussian(T=duration, dt=dt, **kwargs)
+                    population_wave = self.get_random_gaussian(T=duration, dt=dt, **kwargs) + kwargs['lower_bound_fr_per_pop']
 
                 # poisson draw mother train
                 mother_train = torch.poisson(population_wave * dt)
@@ -207,10 +188,10 @@ class PoissonTimeShiftedData(object):
                                         np.random.rand(1, n_samples) * (std_max - std_min) + std_min), 1)
 
         # shift to 0
-        max_fr = np.random.rand(1) * (fr_range[1] - fr_range[0])  # + fr_range[0]
+        max_fr = np.random.rand(1) * (fr_range[1] - fr_range[0]) + fr_range[0]
         # normalize and shift to right firing range
 
-        return torch.tensor(trace / max(trace) * max_fr + fr_range[0])
+        return torch.tensor(trace / max(trace) * max_fr)
 
     def get_random_sine(self, T, dt, amplitude_range, frequency_range, phase_range):
 
@@ -274,7 +255,7 @@ class PoissonTimeShiftedData(object):
 
 
 if __name__ == '__main__':
-    n_h = 3
+    n_h = 6
     duration = 1
     dt = 1e-2
     x = PoissonTimeShiftedData(
@@ -282,8 +263,8 @@ if __name__ == '__main__':
         n_populations=n_h,
         n_batches=1,
         duration=duration, dt=dt,
-        fr_mode='gaussian', delay=1, temporal_connections='random', corr=0.5, show_connection=True)  # ,
-    # fr_range=[10, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.1, 0.8])
+        fr_mode='gaussian', delay=1, temporal_connections='random', corr=1, show_connection=True,
+        fr_range=[50, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.01, 0.05])
 
     print(x.data.mean())
     print(torch.sum(x.added_spikes) / torch.sum(x.data))
