@@ -10,8 +10,8 @@ class PoissonTimeShiftedData(object):
             neurons_per_population=10,
             n_populations=20,
             n_batches=200,
-            time_steps_per_batch=100,
-            fr_mode='sine', delay=1, temporal_connections=None,
+            duration=0.1, dt=1e-2,
+            fr_mode='gaussian', delay=1, temporal_connections='random', corr=None, show_connection=True,
             **kwargs
 
     ):
@@ -21,21 +21,27 @@ class PoissonTimeShiftedData(object):
 
         if fr_mode == 'sine':
             if 'frequency_range' not in kwargs:
-                kwargs['frequency_range'] = [40, 400]
+                kwargs['frequency_range'] = [40, 200]
             if 'amplitude_range' not in kwargs:
-                kwargs['amplitude_range'] = [.01, .5]
+                kwargs['amplitude_range'] = [40, 80]
             if 'phase_range' not in kwargs:
                 kwargs['phase_range'] = [0, torch.pi]
 
         if fr_mode == 'gaussian':
-            if 'max_fr' not in kwargs:
-                kwargs['fr_range'] = [0.1, 0.8]
+            if 'fr_range' not in kwargs:
+                kwargs['fr_range'] = [5, 40]
             if 'mu_range' not in kwargs:
-                kwargs['mu_range'] = [0, time_steps_per_batch]
+                kwargs['mu_range'] = [0, duration]  # in seconds
             if 'std_range' not in kwargs:
-                kwargs['std_range'] = [4, 14]
+                kwargs['std_range'] = [2 * dt, 10 * dt]  # in seconds
             if 'n_range' not in kwargs:
-                kwargs['n_range'] = [30, 200]
+                kwargs['n_range'] = [0.1, 0.8]  # average number of different gaussians per bin
+            if 'lower_bound_fr_per_pop' not in kwargs:
+                kwargs['lower_bound_fr_per_pop'] = 0.05
+
+
+        if corr == None:
+            corr = n_populations ** 2
 
         # if no temporal connections are given, take half inhibitory and half exciting populations
         if temporal_connections is None:
@@ -43,36 +49,42 @@ class PoissonTimeShiftedData(object):
                 (torch.ones(n_populations, n_populations // 2),
                  torch.full(size=(n_populations, n_populations // 2), fill_value=-1)),
                 dim=1
-            ) / (n_populations * 2)
+            ) / corr
+
+        if temporal_connections == 'random':
+            temporal_connections = self.create_random_connections(n_populations=n_populations,
+                                                                  show_connection=show_connection) / corr
 
         neuron_indexes = torch.arange(end=neurons_per_population * n_populations).view(n_populations,
                                                                                        neurons_per_population)
-
         # initialize empty tensors
+        time_steps_per_batch = int(duration / dt)
+
         self.data = torch.empty(
             neurons_per_population * n_populations,
             time_steps_per_batch,
             n_batches,
             dtype=torch.float
         )
+
         self.deleted_spikes = torch.empty_like(self.data)
         self.added_spikes = torch.empty_like(self.data)
         self.population_waves = torch.empty(n_populations, time_steps_per_batch, n_batches)
         self.mother_trains = torch.empty(n_populations, time_steps_per_batch, n_batches)
 
-        # loop over batches
+            # loop over batches
         for batch_index in range(n_batches):
 
             # get all mother trains by looping over populations
             for population_index in range(n_populations):
                 # get a random sine wave as mother train firing rate
                 if fr_mode == 'sine':
-                    population_wave = self.get_random_sine(T=time_steps_per_batch, **kwargs)
+                    population_wave = self.get_random_sine(T=duration, dt=dt, **kwargs)
                 elif fr_mode == 'gaussian':
-                    population_wave = self.get_random_gaussian(T=time_steps_per_batch, **kwargs)
+                    population_wave = self.get_random_gaussian(T=duration, dt=dt, **kwargs) + kwargs['lower_bound_fr_per_pop']
 
                 # poisson draw mother train
-                mother_train = torch.poisson(population_wave)
+                mother_train = torch.poisson(population_wave * dt)
 
                 # assign population wave and mother train to tensors
                 self.population_waves[population_index, :, batch_index] = population_wave
@@ -88,7 +100,8 @@ class PoissonTimeShiftedData(object):
                 # delete spikes based on inhibitory connections
                 inhibitory_connections = connections < 0
                 deletion_probabilities = -1 * torch.sum(
-                    input=connections[inhibitory_connections].unsqueeze(1) * population_waves[inhibitory_connections, :],
+                    input=connections[inhibitory_connections].unsqueeze(1) * population_waves[inhibitory_connections,
+                                                                             :] * dt,
                     dim=0
                 ).T
                 delete_spikes = (torch.tile(
@@ -103,9 +116,10 @@ class PoissonTimeShiftedData(object):
                 # add spikes based on exciting connections
                 exciting_connection = connections > 0
                 addition_probabilities = torch.sum(
-                    input=connections[exciting_connection].unsqueeze(1) * population_waves[exciting_connection, :],
+                    input=connections[exciting_connection].unsqueeze(1) * population_waves[exciting_connection, :] * dt,
                     dim=0
                 ).T
+
                 add_spikes = torch.poisson(
                     torch.tile(
                         input=torch.roll(
@@ -134,30 +148,54 @@ class PoissonTimeShiftedData(object):
         # make sure there are
         self.data[self.data < 0] = 0
         self.data[self.data > 1] = 1
-
         self.firing_rates = torch.mean(self.data, (1, 2))
 
-    def get_random_gaussian(self, T, fr_range, mu_range, std_range, n_range):
+    def get_random_gaussian(self, T, dt, fr_range, mu_range, std_range, n_range, peak_spread='max', **kwargs):
 
-        T = np.linspace(-10, T+10, T+20)
+        T = np.arange(0, int(T / dt))
+        n_min, n_max = int(n_range[0] / dt), int(n_range[1] / dt)
+        mu_min, mu_max = mu_range[0] / dt, mu_range[1] / dt
+        std_min, std_max = std_range[0] / dt, std_range[1] / dt
+
         def gaussian_pdf(x, mu, std):
             pdf = 1 / (np.sqrt(np.pi) * std) * np.exp(-0.5 * ((x - mu) / std) ** 2)
             return pdf
 
-        n_samples = int(np.random.rand(1) * (n_range[1] - n_range[0]) + n_range[0])
+        if peak_spread == 'random':
+            n_samples = int(np.random.rand(1) * (n_max - n_min) + n_min)
+            trace = np.sum(gaussian_pdf(T[:, None], np.random.rand(1, n_samples) * (mu_max - mu_min) + mu_min,
+                                        np.random.rand(1, n_samples) * (std_max - std_min) + std_min), 1)
+        if peak_spread == 'max':
+            fr = np.random.rand(1) * (n_range[1] - n_range[0]) + n_range[0]
+            temp = np.random.poisson(fr, len(T))
+            n_samples = np.sum(temp)
+            i = 0
+            while n_samples == 0:
+                i += 1
+                temp = np.random.poisson(fr, len(T))
+                n_samples = np.sum(temp)
+                if i == 100:
+                    raise ValueError('Increase n_range (number of gaussian peaks)')
 
-        trace = 0
-        for i in range(n_samples):
-            trace += gaussian_pdf(T, np.random.rand(1) * (mu_range[1] - mu_range[0]) + mu_range[0],
-                              np.random.rand(1) * (std_range[1] - std_range[0]) + std_range[0])
+            mu = np.zeros(n_samples)
+            freqm = 0
+            for i, freq in enumerate(temp):
+                if freq == 0:
+                    continue
+                mu[freqm:freqm + freq] = i
+                freqm += freq
+            trace = np.sum(gaussian_pdf(T[:, None], mu,
+                                        np.random.rand(1, n_samples) * (std_max - std_min) + std_min), 1)
 
+        # shift to 0
         max_fr = np.random.rand(1) * (fr_range[1] - fr_range[0]) + fr_range[0]
+        # normalize and shift to right firing range
 
-        return torch.tensor(trace / max(trace) * max_fr)[10:-10]
+        return torch.tensor(trace / max(trace) * max_fr)
 
-    def get_random_sine(self, T, amplitude_range, frequency_range, phase_range):
+    def get_random_sine(self, T, dt, amplitude_range, frequency_range, phase_range):
 
-        T = torch.linspace(start=0, end=2 * torch.pi, steps=T)
+        T = torch.linspace(start=0, end=2 * torch.pi, steps=int(T / dt))
         amplitude = torch.rand(1) * (amplitude_range[1] - amplitude_range[0]) + amplitude_range[0]
         frequency = torch.rand(1) * (frequency_range[1] - frequency_range[0]) + frequency_range[0]
         phase = torch.rand(1) * (phase_range[1] - phase_range[0]) + phase_range[0]
@@ -167,24 +205,71 @@ class PoissonTimeShiftedData(object):
     def plot_stats(self, batch=0, axes=None):
         if axes is None:
             fig, axes = plt.subplots(2, 3, figsize=(20, 10))
-
         sns.heatmap(self.data[..., batch], ax=axes[0, 0], cbar=False)
         axes[0, 0].set_title('Final spikes')
         sns.heatmap(self.deleted_spikes[..., batch], ax=axes[0, 1], cbar=False)
         axes[0, 1].set_title('Deleted spikes')
         sns.heatmap(self.added_spikes[..., batch], ax=axes[0, 2], cbar=False)
         axes[0, 2].set_title('Added spikes')
-        for wave in self.population_waves[..., batch]:
-            axes[1, 0].plot(wave)
+        colors = ['green', 'red', 'blue', 'orange', 'black', 'green', 'red', 'blue', 'orange', 'black']
+        # for batch in range(100):
+        for i, wave in enumerate(self.population_waves[..., batch]):
+            axes[1, 0].plot(wave)  # , color = colors[i])
         axes[1, 0].set_title('Population waves')
+
         sns.heatmap(self.mother_trains[..., batch], ax=axes[1, 1])
         axes[1, 1].set_title('Mother trains')
         axes[1, 2].plot(self.firing_rates[torch.argsort(self.firing_rates)], '.')
         axes[1, 2].set_title('Mean firing rates (over all batches)')
         return axes
 
+    def create_random_connections(self, n_populations, fraction_exc_inh=0.5, max_correlation=0.9, min_correlation=0.6,
+                                  n_excitatory_input=1, n_inhibitory_input=1, show_connection=False):
+        N_E = int(fraction_exc_inh * n_populations)
+        N_I = n_populations - N_E
+
+        min_n_inhibitory_input = int(0.9 * N_E)
+        min_n_excitatory_input = int(0.9 * N_I)
+        # Weight matrix
+        W = np.random.normal(0.05, 0.02, [n_populations, n_populations])  # background activity
+        W[W < 0] = 0
+        W[N_E:n_populations, :] = - W[N_E:n_populations, :]
+
+        for n in range(n_populations):
+            ei = np.random.randint(low=0, high=N_E, size=(np.random.randint(low=min_n_excitatory_input, high=N_E + 1),))
+            ii = np.random.randint(low=0, high=N_I,
+                                   size=(np.random.randint(low=min_n_inhibitory_input, high=N_I + 1),)) + N_E
+            for j in range(len(ei)):
+                W[ei[j], n] = np.random.rand(1) * (max_correlation - min_correlation) + min_correlation
+            for j in range(len(ii)):
+                W[ii[j], n] = -(np.random.rand(1) * (max_correlation - min_correlation) + min_correlation)
+
+        self.W = torch.tensor(W.T)
+        self.W = self.W - 0.5 * torch.diag(torch.diag(self.W))
+
+        if show_connection:
+            sns.heatmap(self.W)
+            plt.show()
+
+        return self.W
+
+
 if __name__ == '__main__':
-    x = PoissonTimeShiftedData(n_batches=1, n_populations=4, fr_mode='gaussian')
+    n_h = 6
+    duration = 1
+    dt = 1e-2
+    x = PoissonTimeShiftedData(
+        neurons_per_population=10,
+        n_populations=n_h,
+        n_batches=1,
+        duration=duration, dt=dt,
+        fr_mode='gaussian', delay=1, temporal_connections='random', corr=1, show_connection=True,
+        fr_range=[50, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.01, 0.05])
+
     print(x.data.mean())
+    print(torch.sum(x.added_spikes) / torch.sum(x.data))
+    print(torch.sum(x.deleted_spikes) / torch.sum(x.data))
+    print(torch.sum(x.data) / (torch.sum(x.deleted_spikes) + torch.sum(x.added_spikes)))
     axes = x.plot_stats()
     plt.show()
+

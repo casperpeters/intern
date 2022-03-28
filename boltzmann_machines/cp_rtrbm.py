@@ -52,6 +52,7 @@ class RTRBM(object):
               disable_tqdm=False,
               save_every_n_epochs=1, shuffle_batch=True,
               **kwargs):
+
         if self.dim == 2:
             num_batches = 1
             batch_size = 1

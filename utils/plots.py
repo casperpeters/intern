@@ -46,21 +46,21 @@ def plot_mean_std_param_history(parameter_history):
     plt.show()
 
 
-def plot_weights(W, U, figsize=(10, 4)):
+def plot_weights(W, U, figsize=(10, 4), fs = 12):
 
     fig, axes = plt.subplots(1, 2, figsize=figsize)
     sns.heatmap(W, ax=axes[0])
-    axes[0].set_ylabel('$h^{[t]}$', color='#2F5597', fontsize=15, rotation=0, labelpad=25)
-    axes[0].set_xlabel('$v^{[t]}$', color='#C55A11', fontsize=15)
-    axes[0].set_title('$W$', fontsize=20)
+    axes[0].set_ylabel('$h^{[t]}$', color='#2F5597', fontsize=fs, rotation=0, labelpad=25)
+    axes[0].set_xlabel('$v^{[t]}$', color='#C55A11', fontsize=fs)
+    axes[0].set_title('$W$', fontsize=1.25 * fs)
     # axes[0].tick_params(axis='both', which='major', labelsize=10)
     axes[0].xaxis.set_ticks([])
     axes[0].yaxis.set_ticks([])
 
     sns.heatmap(U, ax=axes[1])
-    # axes[1].set_xlabel('$h^{[t]}$', color='#2F5597', fontsize=15)
-    axes[1].set_xlabel('$h^{[t-1]}$', color='#2F5597', fontsize=15)
-    axes[1].set_title('$U$', fontsize=20)
+    # axes[1].set_xlabel('$h^{[t]}$', color='#2F5597', fontsize=fs)
+    axes[1].set_xlabel('$h^{[t-1]}$', color='#2F5597', fontsize=fs)
+    axes[1].set_title('$U$', fontsize=1.25 * fs)
     # axes[1].tick_params(axis='both', which='major', labelsize=10)
     axes[1].xaxis.set_ticks([])
     axes[1].yaxis.set_ticks([])

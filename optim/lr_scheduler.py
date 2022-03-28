@@ -7,7 +7,6 @@ def get_lrs(mode, n_epochs, **kwargs):
     This function returns a list of learning rates for a given number of epochs.
     It can be used for cyclical learning rates, exponential learning rates, or
     linear learning rates.
-
     Parameters
     ----------
     mode : str
@@ -29,13 +28,10 @@ def get_lrs(mode, n_epochs, **kwargs):
             starts at 1, and then decreases linearly. The schedule then
             alternates between increasing linearly and decreasing linearly,
             starting with the latter.
-
     n_epochs : int
         The number of epochs to train for.
-
     kwargs : dict
         Keyword arguments for the different learning rate schedules.
-
     Returns
     -------
     lrs : list
@@ -63,7 +59,6 @@ def get_lrs(mode, n_epochs, **kwargs):
 def cyclic(n_epochs, stepsize=200, min_lr=1e-4, max_lr=1e-3):
     """
     This is a function to create a cyclic learning rate schedule.
-
     Parameters
     ----------
     n_epochs : int
@@ -75,12 +70,10 @@ def cyclic(n_epochs, stepsize=200, min_lr=1e-4, max_lr=1e-3):
         The maximum learning rate.
     min_lr : float, optional
         The minimum learning rate.
-
     Returns
     -------
     lrs : list
         The learning rates for each epoch.
-
     References
     ----------
     https://arxiv.org/pdf/1506.01186.pdf
@@ -94,10 +87,9 @@ def cyclic(n_epochs, stepsize=200, min_lr=1e-4, max_lr=1e-3):
     return lrs
 
 
-def geometric_decay(n_epochs, min_lr=1e-4, max_lr=1e-3, start_decay=200):
+def geometric_decay(n_epochs, min_lr=1e-4, max_lr=1e-3, start_decay=0):
     """
     Generates a list of learning rates for aa geometrically decaying learning rate schedule.
-
     Parameters
     ----------
     n_epochs : int
@@ -108,7 +100,6 @@ def geometric_decay(n_epochs, min_lr=1e-4, max_lr=1e-3, start_decay=200):
         The epoch to start decaying the learning rate. Default: 200
     max_lr : float, optional
         The initial learning rate. Default: 1e-3
-
     Returns
     -------
     lrs : list
@@ -124,7 +115,6 @@ def geometric_decay(n_epochs, min_lr=1e-4, max_lr=1e-3, start_decay=200):
 def cosine_annealing_warm_restarts(n_epochs, min_lr=4e-4, max_lr=2e-3, T_i=200, T_mult=1, lr_decay=.85):
     """
     Cosine annealing with warm restarts, described in paper []
-
     Parameters
     ----------
     n_epochs : int
@@ -139,12 +129,10 @@ def cosine_annealing_warm_restarts(n_epochs, min_lr=4e-4, max_lr=2e-3, T_i=200, 
         The factor to increase T_i by after each restart.
     lr_decay : float, optional
         The factor to decrease max_lr and min_lr by.
-
     Returns
     -------
     lrs : list
         The learning rates for each epoch.
-
     References
     ----------
     "SGDR: stochastic gradient descent with warm restarts"
@@ -182,7 +170,6 @@ def cyclic_annealing(n_epochs, stepsize=200, min_lr=1e-4, start_decay=200, max_l
 def linear_decay(n_epochs, max_lr=1e-3, min_lr=1e-5):
     """
     Creates a list of learning rates for a linear decay schedule.
-
     Parameters
     ----------
     n_epochs : int
@@ -191,7 +178,6 @@ def linear_decay(n_epochs, max_lr=1e-3, min_lr=1e-5):
         The learning rate at the start of the schedule.
     lr_stop : float, optional
         The learning rate at the end of the schedule.
-
     Returns
     -------
     lrs : list
