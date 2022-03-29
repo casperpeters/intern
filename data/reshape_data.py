@@ -121,8 +121,11 @@ def generate_train_test(V_data, train_data_ratio=0.7, mode=1):
     return V_train, V_test
 
 
-def reshape_from_batches(x):
-    return torch.reshape(x, (x.shape[0], x.shape[1] * x.shape[2]))
+def reshape_from_batches(x, mode='stack_batches'):
+    if mode == 'stack_batches':
+        return torch.reshape(x, (x.shape[0], x.shape[1] * x.shape[2]))
+    elif mode == 'stack_visibles':
+        return torch.reshape(x, (x.shape[0] * x.shape[2], x.shape[1]))
 
 
 def reshape_to_batches(spikes, mini_batch_size=128):

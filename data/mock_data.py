@@ -4,6 +4,69 @@ from scipy import signal
 import random
 
 
+def poisson_drawn_data(neurons_per_pop=50,
+                       n_pop=6,
+                       n_batches=300,
+                       T=100,
+                       inh=None,
+                       exc=None):
+    """
+    Generated artificial data poisson drawn from random sinusoids. Connections are based on removing or adding spikes
+    dependent on connection and firing rate of connected population.
+    """
+
+    if inh is None:
+        inh = [[0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2], [0, 1, 2]]
+    if exc is None:
+        exc = [[3, 4, 5], [3, 4, 5], [3, 4, 5], [3, 4, 5], [3, 4, 5], [3, 4, 5]]
+
+    ######## Defining coordinate system ########
+    rads = torch.linspace(0, 2 * torch.pi, n_pop + 1)
+    mean_locations_pop = torch.zeros(n_pop, 2)
+    coordinates = torch.zeros(neurons_per_pop * n_pop, 2)
+    for i in range(n_pop):
+        mean_locations_pop[i, :] = torch.tensor([torch.cos(rads[i]), torch.sin(rads[i])])
+        coordinates[neurons_per_pop * i:neurons_per_pop * (i + 1), :] = 0.15 * torch.randn(neurons_per_pop, 2) + \
+                                                                        mean_locations_pop[i]
+
+    ######## Start creating data ########
+    data = torch.zeros(neurons_per_pop * n_pop, T, n_batches)
+    for batch in range(n_batches):
+
+        ######## Creating random input currents and mother trains ########
+        t = np.linspace(0, 10 * np.pi, T)
+        fr = np.zeros((n_pop, T))
+        mother = np.zeros((n_pop, T))
+        for pop in range(n_pop):
+            u = np.random.rand()
+            phase = np.random.randn()
+            amp = .1 * np.random.rand()
+            shift = .3 * np.random.rand()
+            fr[pop, :] = amp * np.sin(phase * (t + 2 * np.pi * u)) + shift
+            while np.min(fr[pop, :]) < 0:
+                u = np.random.rand()
+                phase = np.random.randn()
+                amp = .1 * np.random.rand()
+                shift = .3 * np.random.rand()
+                fr[pop, :] = amp * np.sin(phase * (t + 2 * np.pi * u)) + shift
+            mother[pop, :] = np.random.poisson(fr[pop, :])
+
+        # empty data array
+        spikes = np.zeros((neurons_per_pop * n_pop, T))
+
+        # Excitatory and inhibitory connections
+        for pop in range(n_pop):
+            delete_spikes = np.roll(np.sum(fr[inh[pop], :], 0), 1) * np.ones((neurons_per_pop, T)) >= np.random.uniform(
+                0, 1, size=(neurons_per_pop, T))
+            noise = np.random.poisson(np.roll(np.sum(fr[exc[pop], :], 0), 1), (neurons_per_pop, T))
+            spikes[pop * neurons_per_pop:(pop + 1) * neurons_per_pop, :] = np.tile(mother[pop, :], (
+            neurons_per_pop, 1)) - delete_spikes + noise
+        spikes[spikes < 0] = 0
+        spikes[spikes > 1] = 1
+
+        data[:, :, batch] = torch.tensor(spikes)
+        return data
+
 def create_complex_artificial_data(n_neurons=900,
                                    t_max=2500,
                                    n_populations=9,

@@ -6,7 +6,6 @@ from tqdm import tqdm
 from optim.lr_scheduler import get_lrs
 
 
-x=1
 class RBM(object):
 
     def __init__(self, data, N_H=10, device=None, debug_mode=False, save_every_n_epochs=1):

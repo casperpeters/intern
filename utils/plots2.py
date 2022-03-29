@@ -4,7 +4,9 @@ Always give an ax as input and return it.
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import seaborn as sns
 from utils.funcs import get_param_history
+from matplotlib.colors import LinearSegmentedColormap
 
 
 def mean_std_parameters_history(parameter_history, axes=None):
@@ -24,3 +26,14 @@ def mean_std_parameters_history(parameter_history, axes=None):
     plt.tight_layout()
 
     return axes
+
+
+def raster_plot(data, ax=None):
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(15, 4))
+    colors = ['white', 'black']
+    cmap = LinearSegmentedColormap.from_list('', colors, 2)
+    sns.heatmap(data, cbar=False, cmap=cmap, vmin=0, vmax=1, ax=ax)
+    ax.set_xlabel('time', fontsize=12)
+    ax.set_ylabel('# neuron', fontsize=12)
+    return ax

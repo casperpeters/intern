@@ -63,13 +63,16 @@ def compare_moments_trained(path, test_set, save_path=None, pre_gibbs_k=0, gibbs
     return axes, res_rbm, res_rtrbm
 
 
-def train_rbm_rtrbm(train_data,
-                    N_H=10,
-                    save_path=None,
-                    return_machines=False,
-                    debug_mode=True,
-                    device='cuda',
-                    **kwargs):
+def train_rbm_rtrbm(
+        train_data,
+        N_H=10,
+        save_path=None,
+        return_machines=False,
+        debug_mode=True,
+        device='cuda',
+        **kwargs
+):
+
     """Trains one rbm and one rtrbm witch exactly the same learning parameters.
 
     Parameters
