@@ -11,9 +11,8 @@ class PoissonTimeShiftedData(object):
             n_populations=20,
             n_batches=200,
             duration=0.1, dt=1e-2,
-            fr_mode='gaussian', delay=1, temporal_connections='random', corr=None, show_connection=True,
+            fr_mode='gaussian', delay=1, temporal_connections='random', corr=None, show_connection=False, compute_overlap=False,
             **kwargs
-
     ):
 
         """
@@ -57,7 +56,6 @@ class PoissonTimeShiftedData(object):
             temporal_connections = self.create_random_connections(n_populations=n_populations,
                                                                   show_connection=show_connection) / corr
 
-
         # initialize empty tensors
         time_steps_per_batch = int(duration / dt)
 
@@ -93,6 +91,12 @@ class PoissonTimeShiftedData(object):
                                      (population_waves_interact[h, :, batch_index]).repeat(neurons_per_population, 1)
 
             self.data[..., batch_index] = torch.poisson(neuron_waves_interact[..., batch_index]*dt)
+
+
+        if compute_overlap: # compute only of the first batch
+            self.overlap_distribution = torch.zeros(n_populations)
+            for h in range(n_populations):
+                self.overlap_distribution[h] = self.compute_overlap_distribution(population_waves_original[h, delay:, 0], population_waves_interact[h, :, 0], n_bins=time_steps_per_batch)
 
         # make sure there are
         self.data[self.data < 0] = 0
@@ -206,6 +210,31 @@ class PoissonTimeShiftedData(object):
         population_waves_interact[population_waves_interact > kwargs['upper_bound_fr']] = kwargs['upper_bound_fr']
         return population_waves_interact
 
+    def compute_overlap_distribution(self, arr1, arr2, n_bins):
+        # Determine the range over which the integration will occur
+        arr1 = np.array(arr1)
+        arr2 = np.array(arr2)
+
+        min_value = np.min((arr1.min(), arr2.min()))
+        max_value = np.min((arr1.max(), arr2.max()))
+        # Determine the bin width
+        bin_width = (max_value - min_value) / n_bins
+        # For each bin, find min frequency
+        lower_bound = min_value  # Lower bound of the first bin is the min_value of both arrays
+        min_arr = np.empty(n_bins)  # Array that will collect the min frequency in each bin
+
+        for b in range(n_bins):
+            higher_bound = lower_bound + bin_width  # Set the higher bound for the bin
+            # Determine the share of samples in the interval
+            freq_arr1 = np.ma.masked_where((arr1 < lower_bound) | (arr1 >= higher_bound), arr1).count() / len(arr1)
+            freq_arr2 = np.ma.masked_where((arr2 < lower_bound) | (arr2 >= higher_bound), arr2).count() / len(arr2)
+
+            # Conserve the lower frequency
+            min_arr[b] = np.min((freq_arr1, freq_arr2))
+
+            lower_bound = higher_bound  # To move to the next range
+        return torch.tensor(min_arr.sum())
+
     def plot_stats(self, batch=0, axes=None):
         if axes is None:
             fig, axes = plt.subplots(2, 2, figsize=(15, 10))
@@ -241,9 +270,9 @@ if __name__ == '__main__':
         n_batches=1,
         duration=duration, dt=dt,
         fr_mode='gaussian', delay=1, temporal_connections='random', corr=1, show_connection=True,
-        fr_range=[50, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.005, 0.05])
+        fr_range=[50, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.005, 0.05], compute_overlap=True)
 
-
+    print(x.overlap_distribution)
     axes = x.plot_stats()
     plt.show()
 
