@@ -233,7 +233,6 @@ class PoissonTimeShiftedData(object):
 if __name__ == '__main__':
     n_h = 6
     duration = 1
-    neurons_per_population = 10
     dt = 1e-2
     x = PoissonTimeShiftedData(
         neurons_per_population=10,
@@ -242,6 +241,7 @@ if __name__ == '__main__':
         duration=duration, dt=dt,
         fr_mode='gaussian', delay=1, temporal_connections='random', corr=1, show_connection=True,
         fr_range=[50, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.005, 0.05])
+
 
     axes = x.plot_stats()
     plt.show()
