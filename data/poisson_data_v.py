@@ -185,9 +185,9 @@ class PoissonTimeShiftedData(object):
         return torch.tensor(U.T)
 
     def constraints(self, population_waves_interact, **kwargs):
-        if torch.min(population_waves_interact) < 2 * kwargs['upper_bound_fr'] or torch.max(
+        if torch.min(population_waves_interact) < - 2 * kwargs['upper_bound_fr'] or torch.max(
                 population_waves_interact) > 2 * kwargs['upper_bound_fr']:
-            if torch.min(population_waves_interact) < 2 * kwargs['upper_bound_fr']:
+            if torch.min(population_waves_interact) < - 2 * kwargs['upper_bound_fr']:
                 print(
                     'NOTE: Inhibitory connections are large, firing rate after interaction have reached >-{:.2f} Hz, but are now bounded'.format(
                         2 * kwargs['upper_bound_fr']))
