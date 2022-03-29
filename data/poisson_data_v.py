@@ -11,7 +11,7 @@ class PoissonTimeShiftedData(object):
             n_populations=20,
             n_batches=200,
             duration=0.1, dt=1e-2,
-            fr_mode='gaussian', delay=1, temporal_connections='random', corr=None, show_connection=False, compute_overlap=False,
+            fr_mode='gaussian', delay=1, temporal_connections=None, corr=None, sparcity=0.2, compute_overlap=False,
             **kwargs
     ):
 
@@ -28,33 +28,32 @@ class PoissonTimeShiftedData(object):
 
         if fr_mode == 'gaussian':
             if 'fr_range' not in kwargs:
-                kwargs['fr_range'] = [5, 40]
+                kwargs['fr_range'] = [50, 100]
             if 'mu_range' not in kwargs:
                 kwargs['mu_range'] = [0, duration]  # in seconds
             if 'std_range' not in kwargs:
-                kwargs['std_range'] = [2 * dt, 10 * dt]  # in seconds
+                kwargs['std_range'] = [2 * dt, 5 * dt]  # in seconds
             if 'n_range' not in kwargs:
-                kwargs['n_range'] = [0.1, 0.8]  # average number of different gaussians per bin
+                kwargs['n_range'] = [0.01, 0.05]  # average number of different gaussians per bin
             if 'lower_bound_fr' not in kwargs:
                 kwargs['lower_bound_fr'] = 0.05
             if 'upper_bound_fr' not in kwargs:
-                kwargs['upper_bound_fr'] = 1.2 * kwargs['fr_range'][1]
-
+                kwargs['upper_bound_fr'] = 2 * kwargs['fr_range'][1]
 
         if corr == None:
             corr = n_populations ** 2
 
         # if no temporal connections are given, take half inhibitory and half exciting populations
-        if temporal_connections is None:
+        if temporal_connections == 'deterministic':
+            if n_populations % 2 == 0: a=0
+            else: a=1
             temporal_connections = torch.cat(
-                (torch.ones(n_populations, n_populations // 2),
-                 torch.full(size=(n_populations, n_populations // 2), fill_value=-1)),
-                dim=1
-            ) / corr
+                (torch.ones(n_populations//2+1, n_populations),
+                 torch.full(size=(n_populations//2, n_populations), fill_value=-1)), dim=0) / corr
+            temporal_connections -= torch.diag(torch.diag(temporal_connections))
 
-        if temporal_connections == 'random':
-            temporal_connections = self.create_random_connections(n_populations=n_populations,
-                                                                  show_connection=show_connection) / corr
+        if temporal_connections is None or temporal_connections == 'random':
+            temporal_connections = self.create_random_connections(n_populations=n_populations, sparcity=sparcity) / corr
 
         # initialize empty tensors
         time_steps_per_batch = int(duration / dt)
@@ -74,18 +73,19 @@ class PoissonTimeShiftedData(object):
         for batch_index in range(n_batches):
 
             # get all mother trains by looping over populations
-            for population_index in range(n_populations):
+            for h in range(n_populations):
                 # get a random sine wave as mother train firing rate
                 if fr_mode == 'sine':
-                    population_waves_original[population_index, :, batch_index] = self.get_random_sine(T=duration+delay*dt, dt=dt, **kwargs)
+                    population_waves_original[h, :, batch_index] = self.get_random_sine(T=duration+delay*dt, dt=dt, **kwargs)
                 elif fr_mode == 'gaussian':
-                    population_waves_original[population_index, :, batch_index] = self.get_random_gaussian(T=duration+delay*dt, dt=dt, **kwargs) + kwargs['lower_bound_fr']
+                    population_waves_original[h, :, batch_index] = self.get_random_gaussian(T=duration+delay*dt, dt=dt, **kwargs) + kwargs['lower_bound_fr']
 
-                population_waves_interact[population_index, :, batch_index] = population_waves_original[population_index, delay:, batch_index] + torch.sum(
-                    temporal_connections[:, population_index][None, :].repeat(time_steps_per_batch, 1).T * population_waves_original[:, :-delay, batch_index], 0)
+
+            for h in range(n_populations):
+                population_waves_interact[h, :, batch_index] = population_waves_original[h,delay:, batch_index] + torch.sum(
+                    temporal_connections[:, h][None, :].repeat(time_steps_per_batch, 1).T * population_waves_original[:, :-delay, batch_index], 0)
 
             population_waves_interact = self.constraints(population_waves_interact, **kwargs)
-
             for h in range(n_populations):
                 neuron_waves_interact[neurons_per_population*h : neurons_per_population*(h+1), :, batch_index] = \
                                      (population_waves_interact[h, :, batch_index]).repeat(neurons_per_population, 1)
@@ -94,9 +94,21 @@ class PoissonTimeShiftedData(object):
 
 
         if compute_overlap: # compute only of the first batch
-            self.overlap_distribution = torch.zeros(n_populations)
+            self.overlap_fr = torch.zeros(n_populations)
             for h in range(n_populations):
-                self.overlap_distribution[h] = self.compute_overlap_distribution(population_waves_original[h, delay:, 0], population_waves_interact[h, :, 0], n_bins=time_steps_per_batch)
+                self.overlap_fr[h] = self.compute_overlap_fr(population_waves_original[h, delay:, 0],
+                                                             population_waves_interact[h, :, 0],
+                                                             n_bins=4 * time_steps_per_batch)
+        else:
+            if time_steps_per_batch > 100:
+                T = 100
+            else:
+                T = time_steps_per_batch
+            self.overlap_fr = torch.zeros(n_populations)
+            for h in range(n_populations):
+                self.overlap_fr[h] = self.compute_overlap_fr(population_waves_original[h, delay:T+delay, 0],
+                                                             population_waves_interact[h, :T, 0],
+                                                             n_bins=4 * T)
 
         # make sure there are
         self.data[self.data < 0] = 0
@@ -160,7 +172,7 @@ class PoissonTimeShiftedData(object):
         return amplitude * torch.sin(frequency * T - phase) + amplitude
 
     def create_random_connections(self, n_populations, fraction_exc_inh=0.5, max_correlation=0.9, min_correlation=0.6,
-                                  sparcity=0.2, show_connection=False):
+                                  sparcity=0.2):
         N_E = int(fraction_exc_inh * n_populations)
         N_I = n_populations - N_E
 
@@ -180,13 +192,7 @@ class PoissonTimeShiftedData(object):
         if np.sum(U == 0)/n_populations**2 < sparcity:
             U.ravel()[np.random.permutation(n_populations ** 2)[:int(sparcity * n_populations ** 2)]] = 0
 
-        U -= 0.8 * np.diag(np.diag(U))
-
-        if show_connection:
-            sns.heatmap(U.T)
-            plt.show()
-
-        return torch.tensor(U.T)
+        return torch.tensor(U-0.8 * np.diag(np.diag(U)))
 
     def constraints(self, population_waves_interact, **kwargs):
         if torch.min(population_waves_interact) < -2 * kwargs['upper_bound_fr'] or \
@@ -210,7 +216,7 @@ class PoissonTimeShiftedData(object):
         population_waves_interact[population_waves_interact > kwargs['upper_bound_fr']] = kwargs['upper_bound_fr']
         return population_waves_interact
 
-    def compute_overlap_distribution(self, arr1, arr2, n_bins):
+    def compute_overlap_fr(self, arr1, arr2, n_bins):
         # Determine the range over which the integration will occur
         arr1 = np.array(arr1)
         arr2 = np.array(arr2)
@@ -237,26 +243,40 @@ class PoissonTimeShiftedData(object):
 
     def plot_stats(self, batch=0, axes=None):
         if axes is None:
-            fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+            fig, axes = plt.subplots(2, 3, figsize=(15, 10))
 
-        axes[0, 0].plot(self.firing_rates[torch.argsort(self.firing_rates)], '.')
-        axes[0, 0].set_title('Mean firing rates (over all batches)')
-        sns.heatmap(self.data[..., batch], ax=axes[0, 1], cbar=False)
-        axes[0, 1].set_title('Final spikes')
+        sns.heatmap(self.data[..., batch], ax=axes[0, 0], cbar=False)
+        axes[0, 0].set_title('Final spikes')
 
+        axes[0, 1].plot(self.firing_rates[torch.argsort(self.firing_rates)], '.')
+        axes[0, 1].set_title('Mean firing rates (over all batches)')
+
+        sns.heatmap(self.temporal_connections, ax=axes[0, 2], cbar=False)
+        axes[0, 2].set_title('Hidden population structure')
+
+        maxi = torch.tensor(0)
         for i, (wave_O, wave_I) in enumerate(zip(self.population_waves_original[..., batch, ], self.population_waves_interact[..., batch])):
-            axes[1, 0].plot(wave_O[:self.time_steps_per_batch], label=str(i))
+            axes[1, 0].plot(wave_O, label=str(i))
             axes[1, 1].plot(wave_I, label=str(i))
+            maxi = torch.max(maxi, torch.max(torch.concat([wave_O, wave_I])))
 
         axes[1, 0].set_title('Original population waves')
         axes[1, 0].set_xlabel('Time')
-        axes[1, 0].set_xticks([0, self.time_steps_per_batch])
-        axes[1, 0].set_xticklabels(['0', str(self.time_steps_per_batch)])
+        axes[1, 0].set_xticks([0, self.time_steps_per_batch + self.delay])
+        axes[1, 0].set_xticklabels(['0', str(self.time_steps_per_batch + self.delay)])
+        axes[1, 0].set_ylim([0, maxi])
 
         axes[1, 1].set_title('Population waves after interaction')
         axes[1, 1].set_xlabel('Time')
         axes[1, 1].set_xticks([0, self.time_steps_per_batch])
-        axes[1, 1].set_xticklabels([str(self.delay), str(self.time_steps_per_batch+self.delay)])
+        axes[1, 1].set_xticklabels([str(self.delay), str(self.time_steps_per_batch + self.delay)])
+        axes[1, 1].set_ylim([0, maxi])
+
+        axes[1, 2].bar(np.arange(self.overlap_fr.shape[0]), np.sort(np.array(self.overlap_fr))[::-1])
+        axes[1, 2].set_title('Overlap of pop. waves before and after interaction ')
+        axes[1, 2].set_xlabel('Hidden population index')
+        axes[1, 2].set_ylabel('Normalized overlap')
+        axes[1, 2].set_ylim([0, 1])
 
         return axes
 
@@ -269,10 +289,9 @@ if __name__ == '__main__':
         n_populations=n_h,
         n_batches=1,
         duration=duration, dt=dt,
-        fr_mode='gaussian', delay=1, temporal_connections='random', corr=1, show_connection=True,
-        fr_range=[50, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.005, 0.05], compute_overlap=True)
+        fr_mode='gaussian', delay=1, temporal_connections='random', corr=1,
+        fr_range=[50, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.01, 0.05], compute_overlap=True)
 
-    print(x.overlap_distribution)
     axes = x.plot_stats()
     plt.show()
 
