@@ -48,7 +48,7 @@ class PoissonTimeShiftedData(object):
             if n_populations % 2 == 0: a=0
             else: a=1
             temporal_connections = torch.cat(
-                (torch.ones(n_populations//2+1, n_populations),
+                (torch.ones(n_populations//2+a, n_populations),
                  torch.full(size=(n_populations//2, n_populations), fill_value=-1)), dim=0) / corr
             temporal_connections -= torch.diag(torch.diag(temporal_connections))
 
@@ -82,10 +82,11 @@ class PoissonTimeShiftedData(object):
 
 
             for h in range(n_populations):
-                population_waves_interact[h, :, batch_index] = population_waves_original[h,delay:, batch_index] + torch.sum(
+                population_waves_interact[h, :, batch_index] = population_waves_original[h, delay:, batch_index] + torch.sum(
                     temporal_connections[:, h][None, :].repeat(time_steps_per_batch, 1).T * population_waves_original[:, :-delay, batch_index], 0)
 
             population_waves_interact = self.constraints(population_waves_interact, **kwargs)
+
             for h in range(n_populations):
                 neuron_waves_interact[neurons_per_population*h : neurons_per_population*(h+1), :, batch_index] = \
                                      (population_waves_interact[h, :, batch_index]).repeat(neurons_per_population, 1)
@@ -281,7 +282,7 @@ class PoissonTimeShiftedData(object):
         return axes
 
 if __name__ == '__main__':
-    n_h = 6
+    n_h = 3
     duration = 1
     dt = 1e-2
     x = PoissonTimeShiftedData(
@@ -289,7 +290,7 @@ if __name__ == '__main__':
         n_populations=n_h,
         n_batches=1,
         duration=duration, dt=dt,
-        fr_mode='gaussian', delay=1, temporal_connections='random', corr=1,
+        fr_mode='gaussian', delay=1, temporal_connections='deterministic', corr=100,
         fr_range=[50, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.01, 0.05], compute_overlap=True)
 
     axes = x.plot_stats()
