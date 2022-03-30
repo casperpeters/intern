@@ -188,7 +188,7 @@ class RBM(object):
         vt = torch.zeros(self.N_V, chain, dtype=self.dtype, device=self.device)
         ht = torch.zeros(self.N_H, chain, dtype=self.dtype, device=self.device)
 
-        v = v_start
+        v = v_start[:, None]
 
         for kk in range(pre_gibbs_k):
             _, h = self.visible_to_hidden(v, AF=AF)
@@ -200,8 +200,8 @@ class RBM(object):
             for kk in range(gibbs_k):
                 _, h = self.visible_to_hidden(v, AF=AF)
                 _, v = self.hidden_to_visible(h, AF=AF)
-                vt_k[:, kk] = v
-                ht_k[:, kk] = h
+                vt_k[:, kk] = v[:, 0]
+                ht_k[:, kk] = h[:, 0]
 
             if mode == 1:
                 vt[:, t] = vt_k[:, -1]
@@ -228,10 +228,12 @@ if __name__ == '__main__':
     std = torch.zeros(N_H, 20)
 
     rbm = RBM(data, N_H=N_H, device="cpu")
-    rbm.learn(batch_size=6, n_epochs=100, lr=1e-3, mom=0, wc=0, sp=None, disable_tqdm=False)
+    rbm.learn(batch_size=6, n_epochs=2, lr=1e-3, mom=0, wc=0, sp=None, disable_tqdm=False)
 
     plt.plot(rbm.errors)
     plt.show()
 
     sns.heatmap(rbm.W)
     plt.show()
+
+    vt, ht = rbm.sample(data[:, 0, 0])
