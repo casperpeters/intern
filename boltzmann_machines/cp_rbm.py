@@ -87,27 +87,26 @@ class RBM(object):
             for batch in range(num_batches):
                 self.dparams = self.initialize_grad_updates()
 
-                for i in range(0, batch_size):
-                    if self.dim == 1:
-                        v = self.data.to(self.device)
-                    elif self.dim == 2:
-                        v = self.data[:, batch * batch_size + i].to(self.device)
+                if self.dim == 1:
+                    v = self.data.to(self.device)[:, None]
+                elif self.dim == 2:
+                    v = self.data[:, batch * batch_size : (batch+1) * batch_size].to(self.device)
+                    if batch_size == 1: v = v[:, None]
 
-                    # Perform contrastive divergence and compute model statistics
-                    if PCD and epoch != 0:
-                        # use last gibbs sample as input (Persistant Contrastive Divergence)
-                        vk, pvk, hk, phk, ph, h = self.CD(vk, CDk, AF=AF)
-                        ph, h = self.visible_to_hidden(v, AF=AF)
-                    else:
-                        # use data (normal Contrastive Divergence)
-                        vk, pvk, hk, phk, ph, h = self.CD(v, CDk, AF=AF)
+                # Perform contrastive divergence and compute model statistics
+                if PCD and epoch != 0:
+                    # use last gibbs sample as input (Persistant Contrastive Divergence)
+                    vk, pvk, hk, phk, ph, h = self.CD(vk, CDk, AF=AF)
+                    ph, h = self.visible_to_hidden(v, AF=AF)
+                else:
+                    # use data (normal Contrastive Divergence)
+                    vk, pvk, hk, phk, ph, h = self.CD(v, CDk, AF=AF)
 
-                    # Accumulate error
-                    err += torch.sum((v - vk) ** 2).cpu()
+                # Accumulate error
+                err += torch.sum((v - vk) ** 2).cpu()
 
-                    # Backpropagation, compute gradients
-                    dparam = self.grad(v, vk, ph, phk)
-                    for j in range(len(dparam)): self.dparams[j] += dparam[j] / batch_size
+                # Backpropagation, compute gradients
+                self.dparams = self.grad(v, vk, ph, phk, batch_size)
 
                 # Update gradients
                 Dparams = self.update_grad(Dparams, lr=self.lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
@@ -129,26 +128,26 @@ class RBM(object):
 
     def visible_to_hidden(self, v, AF=torch.sigmoid):
 
-        p = AF(torch.matmul(v, self.W.T) + self.b_H)
+        p = AF(torch.matmul(self.W, v) + self.b_H[:, None])
 
         return p, torch.bernoulli(p)
 
     def hidden_to_visible(self, h, AF=torch.sigmoid):
 
-        p = AF(torch.matmul(h, self.W) + self.b_V)
+        p = AF(torch.matmul(self.W.T, h) + self.b_V[:, None])
 
         return p, torch.bernoulli(p)
 
     def initialize_grad_updates(self):
         return [torch.zeros_like(param, dtype=self.dtype, device=self.device) for param in self.params]
 
-    def grad(self, v, vk, ph, phk):
+    def grad(self, v, vk, ph, phk, batch_size):
 
-        dW = torch.outer(ph, v.T) - torch.outer(phk, vk.T)
-        db_V = v - vk
-        db_H = ph - phk
+        dW = torch.matmul(ph, v.T) - torch.matmul(phk, vk.T)
+        db_V = torch.sum(v - vk, 1)
+        db_H = torch.sum(ph - phk, 1)
 
-        return [dW, db_H, db_V]
+        return [dW / batch_size, db_H / batch_size, db_V / batch_size]
 
     def update_grad(self, Dparams, lr=1e-3, mom=0, wc=0, sp=None, x=2):
 
@@ -212,40 +211,27 @@ class RBM(object):
 
         return vt, ht
 
-"""
-# This is an example run:
-from data.reshape_data import *
-from data.mock_data import *
-import seaborn as sns
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-import matplotlib.pyplot as plt
 
-N_V, N_H, T = 16, 8, 64
-data = create_BB(N_V=N_V, T=T, n_samples=24, width_vec=[4, 5, 6, 7], velocity_vec=[2, 3], boundary=False)
-mean = torch.zeros(N_H, 20)
-std = torch.zeros(N_H, 20)
+if __name__ == '__main__':
 
-rbm = RBM(data, N_H=N_H, device="cpu")
-rbm.learn(batchsize=6, n_epochs=100, lr=1e-3, mom=0, wc=0, sp=None, disable_tqdm=False)
+    # This is an example run:
+    from data.reshape_data import *
+    from data.mock_data import *
+    import seaborn as sns
+    import os
+    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    import matplotlib.pyplot as plt
 
-vt_infer, rt_infer = rbm.sample(torch.tensor(data[:, T//2, 0], dtype=torch.float))
+    N_V, N_H, T = 16, 8, 64
+    data = create_BB(N_V=N_V, T=T, n_samples=24, width_vec=[4, 5, 6, 7], velocity_vec=[2, 3], boundary=False)
+    mean = torch.zeros(N_H, 20)
+    std = torch.zeros(N_H, 20)
 
-sns.heatmap(vt_infer.cpu())
-plt.show()
+    rbm = RBM(data, N_H=N_H, device="cpu")
+    rbm.learn(batch_size=6, n_epochs=100, lr=1e-3, mom=0, wc=0, sp=None, disable_tqdm=False)
 
-plt.plot(rbm.errors.cpu())
-plt.show()
+    plt.plot(rbm.errors)
+    plt.show()
 
-sns.heatmap(rbm.W)
-plt.show()
-
-from utils.plots import *
-N_V, T, num_samples = data.shape
-data1 = torch.zeros(N_V, T * num_samples)
-for i in range(num_samples):
-    data1[:, T * i:T * (i + 1)] = data[:, :, i]
-
-rt, h = rbm.visible_to_hidden(data1)
-plot_effective_coupling_VH(rbm.W, data1.float(), rt.float())
-"""
+    sns.heatmap(rbm.W)
+    plt.show()
