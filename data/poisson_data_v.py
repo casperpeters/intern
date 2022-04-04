@@ -71,28 +71,31 @@ class PoissonTimeShiftedData(object):
 
         # loop over batches
         for batch_index in range(n_batches):
-
             # get all mother trains by looping over populations
             for h in range(n_populations):
-                # get a random sine wave as mother train firing rate
+                # get a random sine wave or gaussian as mother train firing rate
                 if fr_mode == 'sine':
                     population_waves_original[h, :, batch_index] = self.get_random_sine(T=duration+delay*dt, dt=dt, **kwargs)
                 elif fr_mode == 'gaussian':
                     population_waves_original[h, :, batch_index] = self.get_random_gaussian(T=duration+delay*dt, dt=dt, **kwargs) + kwargs['lower_bound_fr']
 
+            # compute interactions of all populations on their resulting firing rate
+            population_waves_interact_temp = population_waves_original[..., batch_index].detach().clone()
+            for t in range(delay, time_steps_per_batch+delay):
+                for h in range(n_populations):
+                    population_waves_interact_temp[h, t] += torch.sum(temporal_connections[:, h][None, :] * \
+                                                                      population_waves_interact_temp[:, t-delay]) / n_populations
+                # constrain to only positive values, upper limit and remove nan
+                population_waves_interact_temp[:, t] = self.constraints(population_waves_interact_temp[:, t], **kwargs)
 
-            for h in range(n_populations):
-                population_waves_interact[h, :, batch_index] = population_waves_original[h, delay:, batch_index] + torch.sum(
-                    temporal_connections[:, h][None, :].repeat(time_steps_per_batch, 1).T * population_waves_original[:, :-delay, batch_index], 0)
-
-            population_waves_interact = self.constraints(population_waves_interact, **kwargs)
+            # cut first temporal part (not every thing has temporal connections) and apply constraints
+            population_waves_interact[..., batch_index] = population_waves_interact_temp[:, delay:]
 
             for h in range(n_populations):
                 neuron_waves_interact[neurons_per_population*h : neurons_per_population*(h+1), :, batch_index] = \
                                      (population_waves_interact[h, :, batch_index]).repeat(neurons_per_population, 1)
 
             self.data[..., batch_index] = torch.poisson(neuron_waves_interact[..., batch_index]*dt)
-
 
         if compute_overlap: # compute only of the first batch
             self.overlap_fr = torch.zeros(n_populations)
@@ -124,7 +127,7 @@ class PoissonTimeShiftedData(object):
 
     def get_random_gaussian(self, T, dt, fr_range, mu_range, std_range, n_range, peak_spread='max', **kwargs):
 
-        T = np.arange(0, int(T / dt))
+        T = np.arange(0, int(np.ceil(T / dt)))
         n_min, n_max = int(n_range[0] / dt), int(n_range[1] / dt)
         mu_min, mu_max = mu_range[0] / dt, mu_range[1] / dt
         std_min, std_max = std_range[0] / dt, std_range[1] / dt
@@ -193,11 +196,12 @@ class PoissonTimeShiftedData(object):
         if np.sum(U == 0)/n_populations**2 < sparcity:
             U.ravel()[np.random.permutation(n_populations ** 2)[:int(sparcity * n_populations ** 2)]] = 0
 
-        return torch.tensor(U-0.8 * np.diag(np.diag(U)))
+        return torch.tensor(U - 0.8 * np.diag(np.diag(U)))
 
     def constraints(self, population_waves_interact, **kwargs):
+        i=0
         if torch.min(population_waves_interact) < -2 * kwargs['upper_bound_fr'] or \
-                torch.max(population_waves_interact) > 2 * kwargs['upper_bound_fr']:
+                torch.max(population_waves_interact) > 2 * kwargs['upper_bound_fr'] and i==0:
 
             if torch.min(population_waves_interact) < -2 * kwargs['upper_bound_fr']:
                 print(
@@ -212,7 +216,7 @@ class PoissonTimeShiftedData(object):
                     'NOTE: Excitatory * inhibitory connections are large, firing rate after interaction have reached <$\mid{:.2f}\mid$ Hz, but are now bounded'.format(
                         2 * kwargs['upper_bound_fr']))
             print('Hint: lower temporal connectivity (increase corr) or increase sparcity in the temporal connectivity')
-
+            i+=1
         population_waves_interact[population_waves_interact < kwargs['lower_bound_fr']] = kwargs['lower_bound_fr']
         population_waves_interact[population_waves_interact > kwargs['upper_bound_fr']] = kwargs['upper_bound_fr']
         return population_waves_interact
@@ -282,7 +286,7 @@ class PoissonTimeShiftedData(object):
         return axes
 
 if __name__ == '__main__':
-    n_h = 3
+    n_h = 4
     duration = 1
     dt = 1e-2
     x = PoissonTimeShiftedData(
@@ -290,8 +294,8 @@ if __name__ == '__main__':
         n_populations=n_h,
         n_batches=1,
         duration=duration, dt=dt,
-        fr_mode='gaussian', delay=1, temporal_connections='deterministic', corr=100,
-        fr_range=[50, 100], mu_range=[0, duration], std_range=[2 * dt, 5 * dt], n_range=[0.01, 0.05], compute_overlap=True)
+        fr_mode='gaussian', delay=1, temporal_connections='random', corr=1, sparcity=0,
+        fr_range=[20, 80], mu_range=[0, duration], std_range=[1 * dt, 3 * dt], n_range=[0.01, 0.02], compute_overlap=True)
 
     axes = x.plot_stats()
     plt.show()
