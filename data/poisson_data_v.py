@@ -11,7 +11,7 @@ class PoissonTimeShiftedData(object):
             n_populations=20,
             n_batches=200,
             duration=0.1, dt=1e-2,
-            fr_mode='gaussian', delay=1, temporal_connections=None, corr=None, sparcity=0.2, compute_overlap=False,
+            fr_mode='gaussian', delay=1, temporal_connections=None, corr=None, sparcity=0, compute_overlap=False,
             **kwargs
     ):
 
@@ -36,10 +36,10 @@ class PoissonTimeShiftedData(object):
             if 'n_range' not in kwargs:
                 kwargs['n_range'] = [0.01, 0.05]  # average number of different gaussians per bin
             if 'lower_bound_fr' not in kwargs:
-                kwargs['lower_bound_fr'] = 0.05
+                kwargs['lower_bound_fr'] = 0
             if 'upper_bound_fr' not in kwargs:
                 kwargs['upper_bound_fr'] = 2 * kwargs['fr_range'][1]
-
+        kwargs['number of runs constraint'] = 0
         if corr == None:
             corr = n_populations ** 2
 
@@ -136,6 +136,26 @@ class PoissonTimeShiftedData(object):
             pdf = 1 / (np.sqrt(np.pi) * std) * np.exp(-0.5 * ((x - mu) / std) ** 2)
             return pdf
 
+        def check_length_sequence(array, th=2):
+            max_lenght_sequence = 100
+            while max_lenght_sequence > th:
+                array_ = array > 0
+                bounded = np.hstack(([0], array_, [0]))  # make sure all runs of ones are well-bounded
+                difs = np.diff(bounded)  # get 1 at run starts and -1 at run ends
+                run_starts, = np.where(difs > 0)
+                run_ends, = np.where(difs < 0)
+                length_sequence = run_ends - run_starts
+                max_lenght_sequence = max(length_sequence)
+                for i in range(len(length_sequence)):
+                    if length_sequence[i] < th:
+                        continue
+                    else:
+                        array_[run_starts[i] + th] = abs(array_[run_starts[i] + th] - 1) > 0
+                array_ = 1.0 * array_
+                array_[array_ == 1] = array[array_ == 1]
+                array = array_.copy()
+            return np.array(array).astype(int)
+
         if peak_spread == 'random':
             n_samples = int(np.random.rand(1) * (n_max - n_min) + n_min)
             trace = np.sum(gaussian_pdf(T[:, None], np.random.rand(1, n_samples) * (mu_max - mu_min) + mu_min,
@@ -143,14 +163,20 @@ class PoissonTimeShiftedData(object):
         if peak_spread == 'max':
             fr = np.random.rand(1) * (n_range[1] - n_range[0]) + n_range[0]
             temp = np.random.poisson(fr, len(T))
+            temp[temp>2] = 2
+            temp = check_length_sequence(temp, th=2)
+
             n_samples = np.sum(temp)
             i = 0
             while n_samples == 0:
                 i += 1
                 temp = np.random.poisson(fr, len(T))
+                temp[temp > 2] = 2
+                temp = check_length_sequence(temp, th=2)
                 n_samples = np.sum(temp)
                 if i == 100:
                     raise ValueError('Increase n_range (number of gaussian peaks)')
+                    break
 
             mu = np.zeros(n_samples)
             freqm = 0
@@ -162,8 +188,11 @@ class PoissonTimeShiftedData(object):
             trace = np.sum(gaussian_pdf(T[:, None], mu,
                                         np.random.rand(1, n_samples) * (std_max - std_min) + std_min), 1)
 
-        max_fr = np.random.rand(1) * (fr_range[1] - fr_range[0]) + fr_range[0]
+            # peaks = np.where((trace[1:-1] > trace[0:-2]) * (trace[1:-1] > trace[2:]))[0] + 1
+            # maxi = max(trace[peaks])
+            # mini = min(trace[peaks])
 
+        max_fr = np.random.rand(1) * (fr_range[1] - fr_range[0]) + fr_range[0]
         return torch.tensor(trace / max(trace) * max_fr)
 
     def get_random_sine(self, T, dt, amplitude_range, frequency_range, phase_range):
@@ -175,8 +204,7 @@ class PoissonTimeShiftedData(object):
 
         return amplitude * torch.sin(frequency * T - phase) + amplitude
 
-    def create_random_connections(self, n_populations, fraction_exc_inh=0.5, max_correlation=0.9, min_correlation=0.6,
-                                  sparcity=0.2):
+    def create_random_connections(self, n_populations, fraction_exc_inh=0.5, max_correlation=0.9, min_correlation=0.6, sparcity=0, self_conn=False):
         N_E = int(fraction_exc_inh * n_populations)
         N_I = n_populations - N_E
 
@@ -195,28 +223,32 @@ class PoissonTimeShiftedData(object):
 
         if np.sum(U == 0)/n_populations**2 < sparcity:
             U.ravel()[np.random.permutation(n_populations ** 2)[:int(sparcity * n_populations ** 2)]] = 0
-
-        return torch.tensor(U - 0.8 * np.diag(np.diag(U)))
+        if isinstance(self_conn, (float)):
+            return torch.tensor(U - self_conn * np.diag(np.diag(U)))
+        elif self_conn==True or self_conn==None:
+            return torch.tensor(U - 0.8 * np.diag(np.diag(U)))
+        elif self_conn==False:
+            return -torch.tensor(U - 1 * np.diag(np.diag(U)))
 
     def constraints(self, population_waves_interact, **kwargs):
-        i=0
-        if torch.min(population_waves_interact) < -2 * kwargs['upper_bound_fr'] or \
-                torch.max(population_waves_interact) > 2 * kwargs['upper_bound_fr'] and i==0:
 
-            if torch.min(population_waves_interact) < -2 * kwargs['upper_bound_fr']:
-                print(
-                    'NOTE: Inhibitory connections are large, firing rate after interaction have reached >-{:.2f} Hz, but are now bounded'.format(
-                        2 * kwargs['upper_bound_fr']))
-            elif torch.max(population_waves_interact) > 2 * kwargs['upper_bound_fr']:
-                print(
-                    'NOTE: Excitatory connections are large, firing rate after interaction have reached <{:.2f} Hz, but are now bounded'.format(
-                        2 * kwargs['upper_bound_fr']))
-            else:
-                print(
-                    'NOTE: Excitatory * inhibitory connections are large, firing rate after interaction have reached <$\mid{:.2f}\mid$ Hz, but are now bounded'.format(
-                        2 * kwargs['upper_bound_fr']))
-            print('Hint: lower temporal connectivity (increase corr) or increase sparcity in the temporal connectivity')
-            i+=1
+        # if torch.min(population_waves_interact) < -2 * kwargs['upper_bound_fr'] and kwargs['number of runs constraint']==0 or \
+        #         torch.max(population_waves_interact) > 2 * kwargs['upper_bound_fr'] and kwargs['number of runs constraint']==0:
+        #
+        #     if torch.min(population_waves_interact) < -2 * kwargs['upper_bound_fr']:
+        #         print(
+        #             'NOTE: Inhibitory connections are large, firing rate after interaction have reached >-{:.2f} Hz, but are now bounded'.format(
+        #                 2 * kwargs['upper_bound_fr']))
+        #     elif torch.max(population_waves_interact) > 2 * kwargs['upper_bound_fr']:
+        #         print(
+        #             'NOTE: Excitatory connections are large, firing rate after interaction have reached <{:.2f} Hz, but are now bounded'.format(
+        #                 2 * kwargs['upper_bound_fr']))
+        #     else:
+        #         print(
+        #             'NOTE: Excitatory * inhibitory connections are large, firing rate after interaction have reached <$\mid{:.2f}\mid$ Hz, but are now bounded'.format(
+        #                 2 * kwargs['upper_bound_fr']))
+        #     print('Hint: lower temporal connectivity (increase corr) or increase sparcity in the temporal connectivity')
+        #     kwargs['number of runs constraint'] = 1
         population_waves_interact[population_waves_interact < kwargs['lower_bound_fr']] = kwargs['lower_bound_fr']
         population_waves_interact[population_waves_interact > kwargs['upper_bound_fr']] = kwargs['upper_bound_fr']
         return population_waves_interact
@@ -246,11 +278,14 @@ class PoissonTimeShiftedData(object):
             lower_bound = higher_bound  # To move to the next range
         return torch.tensor(min_arr.sum())
 
-    def plot_stats(self, batch=0, axes=None):
+    def plot_stats(self, T=None, batch=0, axes=None):
+        if T is None or T > self.time_steps_per_batch:
+            T = self.time_steps_per_batch
+
         if axes is None:
             fig, axes = plt.subplots(2, 3, figsize=(15, 10))
 
-        sns.heatmap(self.data[..., batch], ax=axes[0, 0], cbar=False)
+        sns.heatmap(self.data[:, :T, batch], ax=axes[0, 0], cbar=False)
         axes[0, 0].set_title('Final spikes')
 
         axes[0, 1].plot(self.firing_rates[torch.argsort(self.firing_rates)], '.')
@@ -260,21 +295,21 @@ class PoissonTimeShiftedData(object):
         axes[0, 2].set_title('Hidden population structure')
 
         maxi = torch.tensor(0)
-        for i, (wave_O, wave_I) in enumerate(zip(self.population_waves_original[..., batch, ], self.population_waves_interact[..., batch])):
-            axes[1, 0].plot(wave_O, label=str(i))
-            axes[1, 1].plot(wave_I, label=str(i))
-            maxi = torch.max(maxi, torch.max(torch.concat([wave_O, wave_I])))
+        for i, (wave_O, wave_I) in enumerate(zip(self.population_waves_original[..., batch], self.population_waves_interact[..., batch])):
+            axes[1, 0].plot(wave_O[:T], label=str(i))
+            axes[1, 1].plot(wave_I[:T], label=str(i))
+            maxi = torch.max(maxi, torch.max(torch.concat([wave_O[:T], wave_I[:T]])))
 
         axes[1, 0].set_title('Original population waves')
         axes[1, 0].set_xlabel('Time')
-        axes[1, 0].set_xticks([0, self.time_steps_per_batch + self.delay])
-        axes[1, 0].set_xticklabels(['0', str(self.time_steps_per_batch + self.delay)])
+        axes[1, 0].set_xticks([0, T + self.delay])
+        axes[1, 0].set_xticklabels(['0', str(T + self.delay)])
         axes[1, 0].set_ylim([0, maxi])
 
         axes[1, 1].set_title('Population waves after interaction')
         axes[1, 1].set_xlabel('Time')
-        axes[1, 1].set_xticks([0, self.time_steps_per_batch])
-        axes[1, 1].set_xticklabels([str(self.delay), str(self.time_steps_per_batch + self.delay)])
+        axes[1, 1].set_xticks([0, T])
+        axes[1, 1].set_xticklabels([str(self.delay), str(T + self.delay)])
         axes[1, 1].set_ylim([0, maxi])
 
         axes[1, 2].bar(np.arange(self.overlap_fr.shape[0]), np.sort(np.array(self.overlap_fr))[::-1])
@@ -286,17 +321,19 @@ class PoissonTimeShiftedData(object):
         return axes
 
 if __name__ == '__main__':
-    n_h = 4
-    duration = 1
+    n_h = 3
+    duration = 500
     dt = 1e-2
-    x = PoissonTimeShiftedData(
-        neurons_per_population=10,
+    corr=0.5
+    s = PoissonTimeShiftedData(
+        neurons_per_population=20,
         n_populations=n_h,
         n_batches=1,
         duration=duration, dt=dt,
-        fr_mode='gaussian', delay=1, temporal_connections='random', corr=1, sparcity=0,
-        fr_range=[20, 80], mu_range=[0, duration], std_range=[1 * dt, 3 * dt], n_range=[0.01, 0.02], compute_overlap=True)
+        fr_mode='gaussian', delay=1, temporal_connections='random', corr=corr, show_connection=False,
+        compute_overlap=False,
+        fr_range=[40, 100], mu_range=[0, duration], std_range=[2 * dt, 3 * dt], n_range=[0.048, 0.05])
 
-    axes = x.plot_stats()
+    axes = s.plot_stats()
     plt.show()
 
