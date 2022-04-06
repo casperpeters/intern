@@ -165,8 +165,6 @@ class PoissonTimeShiftedData(object):
             fr = np.random.rand(1) * (n_range[1] - n_range[0]) + n_range[0]
             temp = np.random.poisson(fr, len(T))
             temp[temp>2] = 2
-            temp[-3:] = 1
-            temp[:3] = 1
             temp = check_length_sequence(temp, th=3)
 
             n_samples = np.sum(temp)
