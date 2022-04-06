@@ -147,10 +147,11 @@ class PoissonTimeShiftedData(object):
                 length_sequence = run_ends - run_starts
                 max_lenght_sequence = max(length_sequence)
                 for i in range(len(length_sequence)):
-                    if length_sequence[i] < th:
+                    if length_sequence[i] <= th:
                         continue
                     else:
                         array_[run_starts[i] + th] = abs(array_[run_starts[i] + th] - 1) > 0
+
                 array_ = 1.0 * array_
                 array_[array_ == 1] = array[array_ == 1]
                 array = array_.copy()
@@ -164,7 +165,9 @@ class PoissonTimeShiftedData(object):
             fr = np.random.rand(1) * (n_range[1] - n_range[0]) + n_range[0]
             temp = np.random.poisson(fr, len(T))
             temp[temp>2] = 2
-            temp = check_length_sequence(temp, th=2)
+            temp[-3:] = 1
+            temp[:3] = 1
+            temp = check_length_sequence(temp, th=3)
 
             n_samples = np.sum(temp)
             i = 0
@@ -322,7 +325,7 @@ class PoissonTimeShiftedData(object):
 
 if __name__ == '__main__':
     n_h = 3
-    duration = 500
+    duration = 1
     dt = 1e-2
     corr=0.5
     s = PoissonTimeShiftedData(
@@ -332,7 +335,7 @@ if __name__ == '__main__':
         duration=duration, dt=dt,
         fr_mode='gaussian', delay=1, temporal_connections='random', corr=corr, show_connection=False,
         compute_overlap=False,
-        fr_range=[40, 100], mu_range=[0, duration], std_range=[2 * dt, 3 * dt], n_range=[0.048, 0.05])
+        fr_range=[40, 100], mu_range=[0, duration], std_range=[1 * dt, 2 * dt], n_range=[0.048, 0.05])
 
     axes = s.plot_stats()
     plt.show()
