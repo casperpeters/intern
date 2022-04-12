@@ -5,12 +5,12 @@ from tqdm import tqdm
 
 def set_to_device(rtrbm, device):
     rtrbm.errors = torch.tensor(rtrbm.errors, device=device)
-    rtrbm.W = rtrbm.W.to(device)
-    rtrbm.U = rtrbm.U.to(device)
-    rtrbm.b_V = rtrbm.b_V.to(device)
-    rtrbm.b_H = rtrbm.b_H.to(device)
-    rtrbm.b_init = rtrbm.b_init.to(device)
-    rtrbm.V = rtrbm.V.to(device)
+    rtrbm.W = rtrbm.W.to(device).detach().clone()
+    rtrbm.U = rtrbm.U.to(device).detach().clone()
+    rtrbm.b_V = rtrbm.b_V.to(device).detach().clone()
+    rtrbm.b_H = rtrbm.b_H.to(device).detach().clone()
+    rtrbm.b_init = rtrbm.b_init.to(device).detach().clone()
+    rtrbm.V = rtrbm.V.to(device).detach().clone()
     rtrbm.device = device
 
     return
@@ -273,12 +273,12 @@ def correlation_matrix(data):
     return C
 
 
-def cross_correlation(data):
+def cross_correlation(data, time_shift=1):
     if np.array(data.shape).shape[0]==3:
 
         for s in range(data.shape[2]):
-            population_vector_t = np.array(data[:, 1:, s])
-            population_vector_tm = np.array(data[:, :-1, s])
+            population_vector_t = np.array(data[:, time_shift:, s])
+            population_vector_tm = np.array(data[:, :-time_shift, s])
             C = np.zeros([population_vector_t.shape[0], population_vector_tm.shape[0], data.shape[2]])
             for i in range(population_vector_t.shape[0]):
                 for j in range(population_vector_tm.shape[0]):
@@ -287,8 +287,8 @@ def cross_correlation(data):
 
     elif np.array(data.shape).shape[0]==2:
 
-        population_vector_t = np.array(data[:, 1:])
-        population_vector_tm = np.array(data[:, :-1])
+        population_vector_t = np.array(data[:, time_shift:])
+        population_vector_tm = np.array(data[:, :-time_shift])
         C = np.zeros([population_vector_t.shape[0], population_vector_tm.shape[0]])
         for i in range(population_vector_t.shape[0]):
             for j in range(population_vector_tm.shape[0]):
