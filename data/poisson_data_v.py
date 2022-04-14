@@ -226,7 +226,6 @@ class PoissonTimeShiftedData(object):
 
         sns.heatmap(self.temporal_connections, ax=axes[0, 2], cbar=False)
         axes[0, 2].set_title('Hidden population structure')
-
         maxi = torch.tensor(0)
         for i, (wave_O, wave_I) in enumerate(zip(self.population_waves_original[..., batch], self.population_waves_interact[..., batch])):
             axes[1, 0].plot(wave_O[:T], label=str(i))
