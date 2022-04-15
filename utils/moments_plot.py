@@ -47,8 +47,8 @@ def infer_and_get_moments_plot(dir,
             x, _ = rtrbm.visible_to_hidden(test[:, :, i], rt)
             ht[:, :, i] = x.clone().detach()
         elif machine == 'rbm':
-            x, _ = rtrbm.visible_to_hidden(test[:, :, i].T)
-            ht[:, :, i] = x.T.clone().detach()
+            x, _ = rtrbm.visible_to_hidden(test[:, :, i])
+            ht[:, :, i] = x.clone().detach()
         else:
             raise ValueError('Machine must be "rbm" or "rtrbm"')
 
@@ -105,8 +105,8 @@ def calculate_moments(vt, ht, vs, hs, n=1000, m=50000):
         vhs = vhs[idx]
     if hht.shape[0] > m:
         idx = torch.randperm(hht.shape[0])[:m]
-        hht = vht[idx]
-        hhs = vhs[idx]
+        hht = hht[idx]
+        hhs = hhs[idx]
 
     return vvt, vvs, vht, vhs, hht, hhs
 
