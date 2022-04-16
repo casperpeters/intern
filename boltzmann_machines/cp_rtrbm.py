@@ -157,6 +157,56 @@ class RTRBM(object):
         for i in range(len(self.params)): self.params[i] += self.Dparams[i]
         return
 
+    def infer(self,
+              data,
+              AF=torch.sigmoid,
+              pre_gibbs_k=50,
+              gibbs_k=10,
+              mode=2,
+              t_extra=0,
+              disable_tqdm=False):
+
+        T = self.T
+        N_H = self.N_H
+        N_V, t1 = data.shape
+
+        vt = torch.zeros(N_V, T + t_extra, dtype=self.dtype, device=self.device)
+        rt = torch.zeros(N_H, T + t_extra, dtype=self.dtype, device=self.device)
+        vt[:, 0:t1] = data.float().to(self.device)
+
+        rt[:, 0] = AF(torch.matmul(self.W, vt[:, 0]) + self.b_init)
+        for t in range(1, t1):
+            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.U, rt[:, t - 1]))
+
+        for t in tqdm(range(t1, T + t_extra), disable=disable_tqdm):
+            v = vt[:, t - 1]
+
+            for kk in range(pre_gibbs_k):
+                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.U, rt[:, t - 1]))).T
+                v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_V.T))
+
+            vt_k = torch.zeros(N_V, gibbs_k, dtype=self.dtype, device=self.device)
+            ht_k = torch.zeros(N_H, gibbs_k, dtype=self.dtype, device=self.device)
+            for kk in range(gibbs_k):
+                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_H + torch.matmul(self.U, rt[:, t - 1]))).T
+                v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_V.T))
+                vt_k[:, kk] = v.T
+                ht_k[:, kk] = h.T
+
+            if mode == 1:
+                vt[:, t] = vt_k[:, -1]
+            if mode == 2:
+                vt[:, t] = torch.mean(vt_k, 1)
+            if mode == 3:
+                E = torch.sum(ht_k * (torch.matmul(self.W, vt_k)), 0) + torch.matmul(self.b_V, vt_k) + torch.matmul(
+                    self.b_H, ht_k) + torch.matmul(torch.matmul(self.U, rt[:, t - 1]).T, ht_k)
+                idx = torch.argmax(E)
+                vt[:, t] = vt_k[:, idx]
+
+            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.U, rt[:, t - 1]))
+
+        return vt, rt
+
     def sample(self, v_start, AF=torch.sigmoid, chain=50, pre_gibbs_k=100, gibbs_k=20, mode=1, disable_tqdm=False):
         vt = torch.zeros(self.N_V, chain + 1, dtype=self.dtype, device=self.device)
         rt = torch.zeros(self.N_H, chain + 1, dtype=self.dtype, device=self.device)
