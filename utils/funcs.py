@@ -273,25 +273,55 @@ def correlation_matrix(data):
     return C
 
 
-def cross_correlation(data, time_shift=1):
-    if np.array(data.shape).shape[0]==3:
-
+def cross_correlation(data, time_shift=1, mode='Correlate'):
+    data = np.array(data)
+    time_shift = int(time_shift)
+    if data.ndim==3:
         for s in range(data.shape[2]):
-            population_vector_t = np.array(data[:, time_shift:, s])
-            population_vector_tm = np.array(data[:, :-time_shift, s])
+            if time_shift == 0:
+                population_vector_t = np.array(data)
+                population_vector_tm = np.array(data)
+            elif time_shift != 0:
+                population_vector_t = np.array(data[:, time_shift:, s])
+                population_vector_tm = np.array(data[:, :-time_shift, s])
             C = np.zeros([population_vector_t.shape[0], population_vector_tm.shape[0], data.shape[2]])
             for i in range(population_vector_t.shape[0]):
                 for j in range(population_vector_tm.shape[0]):
-                    C[i][j][s] = np.correlate(population_vector_t[i], population_vector_tm[j])
+                    if mode == 'Correlate':
+                        C[i][j][s] = np.correlate(population_vector_t[i], population_vector_tm[j])
+                    elif mode == 'Pearson':
+                        C[i][j][s] = np.corrcoef(population_vector_t[i], population_vector_tm[j])[1, 0]
         C = np.mean(C, 2)
 
-    elif np.array(data.shape).shape[0]==2:
+    elif data.ndim==2:
+        if time_shift == 0:
+            population_vector_t = np.array(data)
+            population_vector_tm = np.array(data)
+        elif time_shift != 0:
+            population_vector_t = np.array(data[:, time_shift:])
+            population_vector_tm = np.array(data[:, :-time_shift])
 
-        population_vector_t = np.array(data[:, time_shift:])
-        population_vector_tm = np.array(data[:, :-time_shift])
         C = np.zeros([population_vector_t.shape[0], population_vector_tm.shape[0]])
         for i in range(population_vector_t.shape[0]):
             for j in range(population_vector_tm.shape[0]):
-                C[i][j] = np.correlate(population_vector_t[i], population_vector_tm[j])
+                if mode == 'Correlate':
+                    C[i][j] = np.correlate(population_vector_t[i], population_vector_tm[j])
+                elif mode == 'Pearson':
+                    C[i][j] = np.corrcoef(population_vector_t[i], population_vector_tm[j])[1, 0]
     return C
 
+
+def shuffle_back(W_trained, U_trained, U_true):
+    # calculate correlation and reshuffle weights
+    n_h, n_v = W_trained.shape
+    corr = np.zeros((n_h, n_h))
+    shuffle_idx = np.zeros((n_h))
+    for i in range(n_h):
+        for j in range(n_h):
+            corr[i, j] = np.correlate(U_trained[i, :], U_true[j, :])
+        shuffle_idx[i] = np.argmax(corr[i, :])
+
+    W_trained = W_trained[shuffle_idx, :]
+    U_trained = U_trained[shuffle_idx, :]
+    U_trained = U_trained[:, shuffle_idx]
+    return W_trained, U_trained
