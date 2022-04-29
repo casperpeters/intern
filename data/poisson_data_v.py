@@ -8,18 +8,13 @@ import sys
 
 class PoissonTimeShiftedData(object):
     def __init__(
-            self,
-            neurons_per_population=10,
-            n_populations=20,
-            n_batches=200,
-            time_steps_per_batch=100,
-            fr_mode='gaussian', delay=1, temporal_connections=None, norm=None, sparcity=0, compute_overlap=False,
+            self, neurons_per_population=10, n_populations=20, n_batches=200, time_steps_per_batch=100,
+            fr_mode='gaussian', delay=1, temporal_connections=None, norm=None, sparcity=0,
             **kwargs
     ):
 
         """
         """
-
 
         if 'frequency_range' not in kwargs:
             kwargs['frequency_range'] = [5, 10]
@@ -70,22 +65,33 @@ class PoissonTimeShiftedData(object):
         for batch_index in range(n_batches):
             # get all mother trains by looping over populations
             for h in range(n_populations):
+
                 # get a random sine wave or gaussian as mother train firing rate
                 if fr_mode == 'sine':
-                    population_waves_original[h, :, batch_index] = self.get_random_sine(time_steps_per_batch=time_steps_per_batch + delay,
-                                                                                        **kwargs)
+                    population_waves_original[h, :, batch_index] = self.get_random_sine(
+                        time_steps_per_batch=time_steps_per_batch + delay, **kwargs
+                    )
+
                 elif fr_mode == 'gaussian':
-                    background_wave = self.get_random_gaussian(time_steps_per_batch=time_steps_per_batch + delay,
-                                                                                        amplitude_range=kwargs['amplitude_range'][0])
-                    population_waves_original[h, :, batch_index] = self.get_random_gaussian(time_steps_per_batch=time_steps_per_batch + delay,
-                                                                                        **kwargs) + background_wave
+
+                    background_wave = self.get_random_gaussian(
+                        time_steps_per_batch=time_steps_per_batch + delay,
+                        n=100,
+                        **kwargs
+                    )
+
+                    population_waves_original[h, :, batch_index] = self.get_random_gaussian(
+                        time_steps_per_batch=time_steps_per_batch + delay,
+                        **kwargs
+                    ) + background_wave
 
             # compute interactions of all populations on their resulting firing rate
             population_waves_interact_temp = population_waves_original[..., batch_index].detach().clone()
             for t in range(delay, time_steps_per_batch + delay):
                 for h in range(n_populations):
-                    population_waves_interact_temp[h, t] += torch.sum(temporal_connections[:, h][None, :] * \
-                                                                      population_waves_interact_temp[:,t - delay]) / n_populations
+                    population_waves_interact_temp[h, t] += torch.sum(
+                        temporal_connections[:, h][None, :] * population_waves_interact_temp[:, t-delay]
+                    ) / n_populations
 
                 # constrain to only positive values, upper limit and remove nan
                 population_waves_interact_temp[:, t] = self.constraints(population_waves_interact_temp[:, t], **kwargs)
@@ -99,21 +105,6 @@ class PoissonTimeShiftedData(object):
 
             self.data[..., batch_index] = torch.poisson(neuron_waves_interact[..., batch_index])
 
-        if compute_overlap:  # compute only of the first batch
-            self.overlap_fr = torch.zeros(n_populations)
-            for h in range(n_populations):
-                self.overlap_fr[h] = self.compute_overlap_fr(population_waves_original[h, delay:, 0],
-                                                             population_waves_interact[h, :, 0])
-        else:
-            if time_steps_per_batch > 100:
-                T = 100
-            else:
-                T = time_steps_per_batch
-            self.overlap_fr = torch.zeros(n_populations)
-            for h in range(n_populations):
-                self.overlap_fr[h] = self.compute_overlap_fr(population_waves_original[h, delay:T + delay, 0],
-                                                             population_waves_interact[h, :T, 0])
-
         # make sure there are
         self.data[self.data < 0] = 0
         self.data[self.data > 1] = 1
@@ -125,30 +116,7 @@ class PoissonTimeShiftedData(object):
         self.time_steps_per_batch = time_steps_per_batch
         self.temporal_connections = temporal_connections
 
-
-
-    def get_back_ground_fr(self, time_steps_per_batch, amplitude_range, frequency_range, phase_range, std_range, n=10, **kwargs):
-        T = torch.arange(time_steps_per_batch)
-        def gaussian_pdf(x, mu, std):
-            pdf = 1 / (torch.sqrt(torch.tensor(torch.pi)) * std) * torch.exp(-0.5 * ((x - mu) / std) ** 2)
-            return pdf
-
-        # get sum of sinusoid (more sinusoids longer periodicity)
-        temp = self.get_random_sine(time_steps_per_batch, amplitude_range, frequency_range, phase_range, **kwargs)
-        for i in range(5):
-            temp += self.get_random_sine(time_steps_per_batch, amplitude_range, frequency_range, phase_range, **kwargs)
-
-        # get peak locations of sum of sinusiods, let peak locations be the location of gaussian peaks
-        mu = torch.where((temp[1:-1] > temp[0:-2]) * (temp[1:-1] > temp[2:]))[0] + 1
-        n_samples = mu.shape[0]
-        trace = torch.sum(gaussian_pdf(T[:, None], mu,
-                                    torch.rand(1, n_samples) * (std_range[1] - std_range[0]) + std_range[0]), 1)
-
-        max_fr = torch.rand(1) * (amplitude_range[1]/n - amplitude_range[0]/n) + amplitude_range[0]/n
-        return trace / max(trace) * max_fr
-
-
-    def get_random_gaussian(self, time_steps_per_batch, amplitude_range, frequency_range, phase_range, std_range, **kwargs):
+    def get_random_gaussian(self, time_steps_per_batch, std_range, amplitude_range, n=1, **kwargs):
         T = torch.arange(time_steps_per_batch)
 
         def gaussian_pdf(x, mu, std):
@@ -156,9 +124,9 @@ class PoissonTimeShiftedData(object):
             return pdf
 
         # get sum of sinusoid (more sinusoids longer periodicity)
-        temp = self.get_random_sine(time_steps_per_batch, amplitude_range, frequency_range, phase_range, **kwargs)
+        temp = self.get_random_sine(time_steps_per_batch, amplitude_range, **kwargs)
         for i in range(5):
-            temp += self.get_random_sine(time_steps_per_batch, amplitude_range, frequency_range, phase_range, **kwargs)
+            temp += self.get_random_sine(time_steps_per_batch, amplitude_range, **kwargs)
 
         # get peak locations of sum of sinusiods, let peak locations be the location of gaussian peaks
         mu = torch.where((temp[1:-1] > temp[0:-2]) * (temp[1:-1] > temp[2:]))[0] + 1
@@ -167,7 +135,7 @@ class PoissonTimeShiftedData(object):
                                        torch.rand(1, n_samples) * (std_range[1] - std_range[0]) + std_range[0]), 1)
 
         max_fr = torch.rand(1) * (amplitude_range[1] - amplitude_range[0]) + amplitude_range[0]
-        return trace / max(trace) * max_fr
+        return trace / max(trace) * max_fr / n
 
     def get_random_sine(self, time_steps_per_batch, amplitude_range, frequency_range, phase_range, **kwargs):
         T = torch.linspace(start=0, end=2 * torch.pi * int(time_steps_per_batch/100), steps=time_steps_per_batch)
@@ -193,15 +161,9 @@ class PoissonTimeShiftedData(object):
             return -torch.tensor(U - 1 * np.diag(np.diag(U)))
 
     def constraints(self, population_waves_interact, **kwargs):
-        population_waves_interact[population_waves_interact < 0] = abs(kwargs['upper_bound_fr'])
+        population_waves_interact[population_waves_interact < 0] = 0
         population_waves_interact[population_waves_interact > kwargs['upper_bound_fr']] = kwargs['upper_bound_fr']
         return population_waves_interact
-
-    def compute_overlap_fr(self, arr1, arr2):
-        arr1 = np.array(arr1)
-        arr2 = np.array(arr2)
-        diff = abs(arr1 - arr2)
-        return torch.tensor(np.sum(diff) / np.sum(arr1))
 
     def plot_stats(self, T=None, batch=0, axes=None):
         if T is None or T > self.time_steps_per_batch:
@@ -237,11 +199,6 @@ class PoissonTimeShiftedData(object):
         axes[1, 1].set_xticklabels([str(self.delay), str(T + self.delay)])
         axes[1, 1].set_ylim([0, maxi])
 
-        # axes[1, 2].bar(np.arange(self.overlap_fr.shape[0]), np.sort(np.array(self.overlap_fr))[::-1])
-        # axes[1, 2].set_title('Overlap of pop. waves before and after interaction ')
-        # axes[1, 2].set_xlabel('Hidden population index')
-        # axes[1, 2].set_ylabel('Normalized overlap')
-        # axes[1, 2].set_ylim([0, 1])
         cross_corr = np.zeros(10)
         for i in range(10):
             cross_corr[i] = np.mean(cross_correlation(data=self.data[:, :, 0], time_shift=i, mode='Pearson'))  # mode=Correlate
@@ -255,7 +212,7 @@ class PoissonTimeShiftedData(object):
 
 if __name__ == '__main__':
 
-    n_h = 4
+    n_h = 3
     delay = 1
     norm = 0.5
 
@@ -271,8 +228,8 @@ if __name__ == '__main__':
         neurons_per_population=20,
         n_populations=n_h, n_batches=1,
         time_steps_per_batch=100,
-        fr_mode='sine', delay=delay, temporal_connections='random', norm=norm,
-        frequency_range=frequency_range, amplitude_range=amplitude_range, phase_range=phase_range)
+        fr_mode='gaussian', delay=delay, temporal_connections=temporal_connections, norm=norm,
+        frequency_range=frequency_range, amplitude_range=amplitude_range, phase_range=phase_range, std_range=[1, 2])
 
     axes = s.plot_stats(T=100)
     plt.show()

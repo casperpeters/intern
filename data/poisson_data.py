@@ -18,6 +18,7 @@ class PoissonTimeShiftedData(object):
             frequency_range=None,
             n_peaks_range=None,
             bandwidth=None,
+            poisson_mode='pre'  # ('pre', 'post')
     ):
 
         """
@@ -61,87 +62,135 @@ class PoissonTimeShiftedData(object):
         self.population_waves = torch.empty(n_populations, time_steps_per_batch, n_batches)
         self.mother_trains = torch.empty(n_populations, time_steps_per_batch, n_batches)
 
-        # loop over batches
-        for batch_index in range(n_batches):
+        if poisson_mode == 'post':
+            # loop over batches
+            for batch_index in range(n_batches):
 
-            # get all mother trains by looping over populations
-            for population_index in range(n_populations):
-                if population_wave_form == 'sin':
-                    # get a random sine wave as mother train firing rate
-                    population_wave = self.get_random_sine(
-                        amplitude_range=amplitude_range,
-                        frequency_range=frequency_range,
-                        phase_range=[0, torch.pi]
-                    )
-                elif population_wave_form == 'gaussian':
-                    population_wave = self.get_random_gaussians(
-                        n_peaks_range=n_peaks_range,
-                        bandwidth=bandwidth,
-                        amplitude_range=amplitude_range
-                    )
+                # get all mother trains by looping over populations
+                for population_index in range(n_populations):
+                    if population_wave_form == 'sin':
+                        # get a random sine wave as mother train firing rate
+                        population_wave = self.get_random_sine(
+                            amplitude_range=amplitude_range,
+                            frequency_range=frequency_range,
+                            phase_range=[0, torch.pi]
+                        )
+                    elif population_wave_form == 'gaussian':
+                        population_wave = self.get_random_gaussians(
+                            n_peaks_range=n_peaks_range,
+                            bandwidth=bandwidth,
+                            amplitude_range=amplitude_range
+                        )
 
-                # poisson draw mother train
-                mother_train = torch.poisson(population_wave)
+                    # poisson draw mother train
+                    mother_train = torch.poisson(population_wave)
 
-                # assign population wave and mother train to tensors
-                self.population_waves[population_index, :, batch_index] = population_wave
-                self.mother_trains[population_index, :, batch_index] = mother_train
+                    # assign population wave and mother train to tensors
+                    self.population_waves[population_index, :, batch_index] = population_wave
+                    self.mother_trains[population_index, :, batch_index] = mother_train
 
-            # empty tensor for this batch
-            batch = torch.empty(neurons_per_population * n_populations, time_steps_per_batch)
+                # empty tensor for this batch
+                batch = torch.empty(neurons_per_population * n_populations, time_steps_per_batch)
 
-            # get spikes by looping over populations
-            for population_index in range(n_populations):
-                # connections to current population
-                connections = temporal_connections[population_index, :]
-                population_waves = self.population_waves[..., batch_index]
+                # get spikes by looping over populations
+                for population_index in range(n_populations):
+                    # connections to current population
+                    connections = temporal_connections[population_index, :]
+                    population_waves = self.population_waves[..., batch_index]
 
-                # delete spikes based on inhibitory connections
-                inhibitory_connections = connections < 0
-                deletion_probabilities = -1 * torch.sum(
-                    input=connections[inhibitory_connections].unsqueeze(1) *
-                          population_waves[inhibitory_connections, :],
-                    dim=0
-                ).T
-                delete_spikes = (torch.tile(
-                    input=torch.roll(
-                        input=deletion_probabilities,
-                        shifts=delay,
-                        dims=0
-                    ),
-                    dims=(neurons_per_population, 1)
-                ) > torch.rand(neurons_per_population, time_steps_per_batch)).type(torch.float)
-
-                # add spikes based on exciting connections
-                exciting_connection = connections > 0
-                addition_probabilities = torch.sum(
-                    input=connections[exciting_connection].unsqueeze(1) * population_waves[exciting_connection, :],
-                    dim=0
-                ).T
-                add_spikes = torch.poisson(
-                    torch.tile(
+                    # delete spikes based on inhibitory connections
+                    inhibitory_connections = connections < 0
+                    deletion_probabilities = -1 * torch.sum(
+                        input=connections[inhibitory_connections].unsqueeze(1) *
+                              population_waves[inhibitory_connections, :],
+                        dim=0
+                    ).T
+                    delete_spikes = (torch.tile(
                         input=torch.roll(
-                            input=addition_probabilities,
+                            input=deletion_probabilities,
                             shifts=delay,
                             dims=0
                         ),
                         dims=(neurons_per_population, 1)
-                    )
-                ).type(torch.float)
+                    ) > torch.rand(neurons_per_population, time_steps_per_batch)).type(torch.float)
 
-                add_spikes[add_spikes > 1] = 1
+                    # add spikes based on exciting connections
+                    exciting_connection = connections > 0
+                    addition_probabilities = torch.sum(
+                        input=connections[exciting_connection].unsqueeze(1) * population_waves[exciting_connection, :],
+                        dim=0
+                    ).T
+                    add_spikes = torch.poisson(
+                        torch.tile(
+                            input=torch.roll(
+                                input=addition_probabilities,
+                                shifts=delay,
+                                dims=0
+                            ),
+                            dims=(neurons_per_population, 1)
+                        )
+                    ).type(torch.float)
 
-                spikes = torch.tile(
-                    input=self.mother_trains[population_index, :, batch_index],
-                    dims=(neurons_per_population, 1)
-                ) - delete_spikes + add_spikes
+                    add_spikes[add_spikes > 1] = 1
 
-                batch[neuron_indexes[population_index], :] = spikes[torch.argsort(torch.mean(spikes, dim=1)), :]
+                    spikes = torch.tile(
+                        input=self.mother_trains[population_index, :, batch_index],
+                        dims=(neurons_per_population, 1)
+                    ) - delete_spikes + add_spikes
 
-                self.deleted_spikes[neuron_indexes[population_index], :, batch_index] = delete_spikes
-                self.added_spikes[neuron_indexes[population_index], :, batch_index] = add_spikes
+                    batch[neuron_indexes[population_index], :] = spikes[torch.argsort(torch.mean(spikes, dim=1)), :]
 
-            self.data[..., batch_index] = batch
+                    self.deleted_spikes[neuron_indexes[population_index], :, batch_index] = delete_spikes
+                    self.added_spikes[neuron_indexes[population_index], :, batch_index] = add_spikes
+
+                self.data[..., batch_index] = batch
+
+        elif poisson_mode == 'pre':
+
+            population_waves_original = torch.zeros(n_populations, time_steps_per_batch + delay, n_batches)
+            population_waves_interact = torch.zeros(n_populations, time_steps_per_batch, n_batches)
+            neuron_waves_interact = torch.zeros(neurons_per_population * n_populations, time_steps_per_batch, n_batches)
+
+            for batch_index in range(n_batches):
+                # get all mother trains by looping over populations
+                for h in range(n_populations):
+
+                    # get a random sine wave or gaussian as mother train firing rate
+                    if population_wave_form == 'sin':
+                        # get a random sine wave as mother train firing rate
+                        population_wave = self.get_random_sine(
+                            amplitude_range=amplitude_range,
+                            frequency_range=frequency_range,
+                            phase_range=[0, torch.pi]
+                        )
+                    elif population_wave_form == 'gaussian':
+                        population_waves_original[h, :, batch_index] = self.get_random_gaussians(
+                            n_peaks_range=n_peaks_range,
+                            bandwidth=bandwidth,
+                            amplitude_range=amplitude_range
+                        )
+
+                # compute interactions of all populations on their resulting firing rate
+                population_waves_interact_temp = population_waves_original[..., batch_index].detach().clone()
+                for t in range(delay, time_steps_per_batch + delay):
+                    for h in range(n_populations):
+                        population_waves_interact_temp[h, t] += torch.sum(
+                            temporal_connections[:, h][None, :] * population_waves_interact_temp[:, t - delay]
+                        ) / n_populations
+
+                    # constrain to only positive values, upper limit and remove nan
+                    population_waves_interact_temp[:, t] = self.constraints(population_waves_interact_temp[:, t],
+                                                                            **kwargs)
+
+                # cut first temporal part (not every thing has temporal connections)
+                population_waves_interact[..., batch_index] = population_waves_interact_temp[:, delay:]
+
+                for h in range(n_populations):
+                    neuron_waves_interact[neurons_per_population * h: neurons_per_population * (h + 1), :,
+                    batch_index] = \
+                        (population_waves_interact[h, :, batch_index]).repeat(neurons_per_population, 1)
+
+                self.data[..., batch_index] = torch.poisson(neuron_waves_interact[..., batch_index])
 
         # make sure there are
         self.data[self.data < 0] = 0
