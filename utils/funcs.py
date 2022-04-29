@@ -1,6 +1,40 @@
 import numpy as np
 import torch
 from tqdm import tqdm
+from scipy.stats import pearsonr
+from data.reshape_data import reshape_from_batches
+
+
+def get_reconstruction_mean_pairwise_correlations(true_data, sampled_data):
+
+    # reshape data if it is still in batches
+    if true_data.dim() == 3:
+        true_data = reshape_from_batches(true_data)
+    if sampled_data.dim() == 3:
+        sampled_data = reshape_from_batches(sampled_data)
+
+    # get correlation of true and reconstructed data
+    reconstruction_correlation, _ = pearsonr(true_data.flatten(), sampled_data.flatten())
+
+    # calculate first order moments
+    true_moments, sampled_moments = torch.mean(true_data, 1), torch.mean(sampled_data, 1)
+
+    # get correlation of true and reconstructed first order moments
+    mean_correlation, _ = pearsonr(true_moments, sampled_moments)
+
+    # calculate second order moments
+    true_pairwise = pairwise_moments(true_data, true_data).flatten()
+    sampled_pairwise = pairwise_moments(sampled_data, sampled_data).flatten()
+
+    # get correlation of true and reconstructed second order moments
+    pairwise_correlation, _ = pearsonr(true_pairwise, sampled_pairwise)
+
+    # return
+    return reconstruction_correlation, mean_correlation, pairwise_correlation
+
+
+def calculate_correlation(x, y):
+    return pearsonr(x, y)
 
 
 def set_to_device(rtrbm, device):
@@ -14,6 +48,7 @@ def set_to_device(rtrbm, device):
     rtrbm.device = device
 
     return
+
 
 def pairwise_moments(data1, data2):
     """Average matrix product."""
