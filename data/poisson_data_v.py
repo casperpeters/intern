@@ -19,13 +19,13 @@ class PoissonTimeShiftedData(object):
         if 'frequency_range' not in kwargs:
             kwargs['frequency_range'] = [5, 10]
         if 'amplitude_range' not in kwargs:
-            kwargs['amplitude_range'] = [0.4, 0.8]
+            kwargs['amplitude_range'] = [0.4, 0.5]
         if 'phase_range' not in kwargs:
             kwargs['phase_range'] = [0, torch.pi]
         if 'lower_bound_fr' not in kwargs:
             kwargs['lower_bound_fr'] = 0
         if 'upper_bound_fr' not in kwargs:
-            kwargs['upper_bound_fr'] = 2 * kwargs['amplitude_range'][1]
+            kwargs['upper_bound_fr'] = 3 * kwargs['amplitude_range'][1]
 
         if fr_mode == 'gaussian':
             if 'std_range' not in kwargs:
@@ -76,7 +76,7 @@ class PoissonTimeShiftedData(object):
 
                     background_wave = self.get_random_gaussian(
                         time_steps_per_batch=time_steps_per_batch + delay,
-                        n=100,
+                        n=10,
                         **kwargs
                     )
 
@@ -124,9 +124,9 @@ class PoissonTimeShiftedData(object):
             return pdf
 
         # get sum of sinusoid (more sinusoids longer periodicity)
-        temp = self.get_random_sine(time_steps_per_batch, amplitude_range, **kwargs)
+        temp = self.get_random_sine(time_steps_per_batch, **kwargs)
         for i in range(5):
-            temp += self.get_random_sine(time_steps_per_batch, amplitude_range, **kwargs)
+            temp += self.get_random_sine(time_steps_per_batch, **kwargs)
 
         # get peak locations of sum of sinusiods, let peak locations be the location of gaussian peaks
         mu = torch.where((temp[1:-1] > temp[0:-2]) * (temp[1:-1] > temp[2:]))[0] + 1
@@ -135,9 +135,9 @@ class PoissonTimeShiftedData(object):
                                        torch.rand(1, n_samples) * (std_range[1] - std_range[0]) + std_range[0]), 1)
 
         max_fr = torch.rand(1) * (amplitude_range[1] - amplitude_range[0]) + amplitude_range[0]
-        return trace / max(trace) * max_fr / n
+        return trace / max(trace) * (max_fr / n)
 
-    def get_random_sine(self, time_steps_per_batch, amplitude_range, frequency_range, phase_range, **kwargs):
+    def get_random_sine(self, time_steps_per_batch, frequency_range, phase_range, amplitude_range=[0.4, 0.5], **kwargs):
         T = torch.linspace(start=0, end=2 * torch.pi * int(time_steps_per_batch/100), steps=time_steps_per_batch)
         amplitude = torch.rand(1) * (amplitude_range[1] - amplitude_range[0]) + amplitude_range[0]
         frequency = torch.rand(1) * (frequency_range[1] - frequency_range[0]) + frequency_range[0]
@@ -147,10 +147,10 @@ class PoissonTimeShiftedData(object):
     def create_random_connections(self, n_populations, fraction_exc_inh=0.5, max_normelation=0.9, min_normelation=0.6,
                                   sparcity=0, self_conn=None):
         N_E = int(fraction_exc_inh * n_populations)
-
+        idx = np.random.permutation(n_populations)[:N_E]
         # Weight matrix
         U = np.random.rand(n_populations, n_populations) * (max_normelation - min_normelation) + min_normelation
-        U[N_E:n_populations, :] = - U[N_E:n_populations, :]
+        U[idx, :] = - U[idx, :]
 
         if np.sum(U == 0) / n_populations ** 2 < sparcity:
             U.ravel()[np.random.permutation(n_populations ** 2)[:int(sparcity * n_populations ** 2)]] = 0
@@ -160,10 +160,11 @@ class PoissonTimeShiftedData(object):
         elif self_conn == None:
             return -torch.tensor(U - 1 * np.diag(np.diag(U)))
 
-    def constraints(self, population_waves_interact, **kwargs):
-        population_waves_interact[population_waves_interact < 0] = 0
-        population_waves_interact[population_waves_interact > kwargs['upper_bound_fr']] = kwargs['upper_bound_fr']
+    def constraints(self, population_waves_interact, lower_bound_fr, upper_bound_fr, **kwargs):
+        population_waves_interact[population_waves_interact < 0] = abs(lower_bound_fr)
+        population_waves_interact[population_waves_interact > upper_bound_fr] = upper_bound_fr
         return population_waves_interact
+
 
     def plot_stats(self, T=None, batch=0, axes=None):
         if T is None or T > self.time_steps_per_batch:
@@ -214,10 +215,10 @@ if __name__ == '__main__':
 
     n_h = 3
     delay = 1
-    norm = 0.5
+    norm = 0.36
 
     frequency_range = [5, 10]  # freq of sinus wave, randomly chosen
-    amplitude_range = [0.4, 0.8]  # max amplitude range, randomly chosen
+    amplitude_range = [0.4, 0.5]  # max amplitude range, randomly chosen
     phase_range = [0, torch.pi]  # phase shift of sinus wave, randomly chosen
     temporal_connections = torch.tensor([
         [0, -1, 1],
