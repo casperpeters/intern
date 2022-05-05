@@ -168,6 +168,8 @@ def reshape_list_of_tensors(list_of_tensors):
 
 def reshape(data, T=None, n_batches=None):
     if n_batches == None:
+        if data.ndim == 2:
+            raise ValueError('Already in right shape')
         N, T, num_samples = data.shape
         data1 = torch.zeros(N, T * num_samples)
         for i in range(num_samples):
@@ -183,7 +185,8 @@ def reshape(data, T=None, n_batches=None):
 
     return data1
 
-def resample(data, sr, mode=1):
+
+def resample(data, sr, mode=2):
     '''
     :param data: original data
     :param sr: sampling rate
@@ -191,24 +194,47 @@ def resample(data, sr, mode=1):
     :return: downsampled data
     '''
 
-    N_V, T, n_batches = data.shape
-    data = np.array(data)
+    if data.ndim == 3:
+        N_V, T, n_batches = data.shape
+        new_data = np.array(data)
 
-    # make sure that the modulus(T/sr) = 0
-    if T % sr != 0:
-        data = data[:, :int(T / sr), :]
-    s = int(T / sr)
-    data_nsr = np.zeros([N_V, s, n_batches])
+        # make sure that the modulus(T/sr) = 0
+        if T % sr != 0:
+            new_data = new_data[:, :int(np.floor(T / sr)), :]
+        s = int(np.floor(T / sr))
+        data_nsr = np.zeros([N_V, s, n_batches])
 
-    for t in range(s):
-        if mode == 1:
-            data_nsr[:, t, :] = np.mean(data[:, sr*t:sr*(t + 1), :], axis=1)
-        elif mode == 2:
-            data_nsr[:, t, :] = data[:, sr*t, :]
+        for batch in range(int(n_batches / 20)):
+            for t in range(s):
+                if mode == 1:
+                    temp_data = np.mean(new_data[:, sr * t:sr * (t + 1), 20 * batch:20 * (batch + 1)], 1)
+                    temp_data.ravel()[temp_data.ravel() > 0.5] = 1.0
+                    temp_data.ravel()[temp_data.ravel() <= 0.5] = 0.0
+                    # temp_data.ravel()[temp_data.ravel() == 0.5] = 1.0 * (np.random.rand(np.sum(temp_data == 0.5)) > 0.5)
+                    data_nsr[:, t, 20 * batch:20 * (batch + 1)] = temp_data
 
-    if mode == 1:
-        data_nsr.ravel()[data_nsr.ravel() > 0.5] = 1.0
-        data_nsr.ravel()[data_nsr.ravel() < 0.5] = 0.0
-        data_nsr.ravel()[data_nsr.ravel() == 0.5] = 1.0 * (np.random.rand(np.sum(data_nsr.ravel() == 0.5)) > 0.5)
+                elif mode == 2:
+                    data_nsr[:, t, 20 * batch:20 * (batch + 1)] = data[:, sr * t, 20 * batch:20 * (batch + 1)]
+
+    elif data.ndim == 2:
+        N_V, T = data.shape
+        new_data = np.array(data)
+
+        # make sure that the modulus(T/sr) = 0
+        if T % sr != 0:
+            new_data = new_data[:, :int(np.floor(T / sr))]
+        s = int(np.floor(T / sr))
+        data_nsr = np.zeros([N_V, s])
+
+        for t in range(s):
+            if mode == 1:
+                temp_data = np.mean(new_data[:, sr * t:sr * (t + 1)], 1)
+                temp_data.ravel()[temp_data.ravel() > 0.5] = 1.0
+                temp_data.ravel()[temp_data.ravel() <= 0.5] = 0.0
+                # temp_data.ravel()[temp_data.ravel() == 0.5] = 1.0 * (np.random.rand(np.sum(temp_data == 0.5)) > 0.5)
+                data_nsr[:, t] = temp_data
+
+            elif mode == 2:
+                data_nsr[:, t] = data[:, sr * t]
 
     return torch.tensor(data_nsr, dtype=torch.float)
