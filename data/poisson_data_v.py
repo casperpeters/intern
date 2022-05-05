@@ -102,7 +102,7 @@ class PoissonTimeShiftedData(object):
             for h in range(n_populations):
                 neuron_waves_interact[neurons_per_population * h: neurons_per_population * (h + 1), :, batch_index] = \
                     (population_waves_interact[h, :, batch_index]).repeat(neurons_per_population, 1) * \
-                    torch.linspace(.5, 1.5, neurons_per_population)[:, None]
+                    torch.linspace(0.3, 1.5, neurons_per_population)[:, None]
 
             # neuron_waves_interact += torch.rand()
 
