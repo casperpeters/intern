@@ -22,6 +22,8 @@ class PoissonTimeShiftedData(object):
             kwargs['amplitude_range'] = [0.4, 0.5]
         if 'phase_range' not in kwargs:
             kwargs['phase_range'] = [0, torch.pi]
+        if 'spread_fr' not in kwargs:
+            kwargs['spread_fr'] = [0.6, 1.4]
         if 'lower_bound_fr' not in kwargs:
             kwargs['lower_bound_fr'] = 0
         if 'upper_bound_fr' not in kwargs:
@@ -102,14 +104,7 @@ class PoissonTimeShiftedData(object):
             for h in range(n_populations):
                 neuron_waves_interact[neurons_per_population * h: neurons_per_population * (h + 1), :, batch_index] = \
                     (population_waves_interact[h, :, batch_index]).repeat(neurons_per_population, 1) * \
-                    torch.linspace(0.3, 1.5, neurons_per_population)[:, None]
-
-            # neuron_waves_interact += torch.rand()
-
-            if torch.sum(torch.isnan(neuron_waves_interact)) > 0:
-                print('nan detected')
-            elif torch.sum(neuron_waves_interact < 0) > 0:
-                print('zero detected')
+                    torch.linspace(kwargs['spread_fr'][0], kwargs['spread_fr'][1], neurons_per_population)[torch.randperm(neurons_per_population), None]
 
             self.data[..., batch_index] = torch.poisson(neuron_waves_interact[..., batch_index])
 
@@ -146,7 +141,7 @@ class PoissonTimeShiftedData(object):
         return trace / max(trace) * (max_fr / n)
 
     def get_random_sine(self, time_steps_per_batch, frequency_range, phase_range, amplitude_range=[0.4, 0.5], **kwargs):
-        T = torch.linspace(start=0, end=2 * torch.pi, steps=time_steps_per_batch)
+        T = torch.linspace(start=0, end=2 * torch.pi * int(time_steps_per_batch/100), steps=time_steps_per_batch)
         amplitude = torch.rand(1) * (amplitude_range[1] - amplitude_range[0]) + amplitude_range[0]
         frequency = torch.rand(1) * (frequency_range[1] - frequency_range[0]) + frequency_range[0]
         phase = torch.rand(1) * (phase_range[1] - phase_range[0]) + phase_range[0]
@@ -187,7 +182,7 @@ class PoissonTimeShiftedData(object):
         return
 
 
-    def plot_stats(self, T=None, batch=0, axes=None):
+    def plot_stats(self, T=None, batch=0, axes=None, t_cross_corr=12):
         if T is None or T > self.time_steps_per_batch:
             T = self.time_steps_per_batch
 
@@ -221,8 +216,8 @@ class PoissonTimeShiftedData(object):
         axes[1, 1].set_xticklabels([str(self.delay), str(T + self.delay)])
         axes[1, 1].set_ylim([0, maxi])
 
-        cross_corr = np.zeros(10)
-        for i in range(10):
+        cross_corr = np.zeros(t_cross_corr)
+        for i in range(t_cross_corr):
             cross_corr[i] = np.mean(cross_correlation(data=self.data[:, :, 0], time_shift=i, mode='Pearson'))  # mode=Correlate
         axes[1, 2].plot(cross_corr)
         axes[1, 2].set_title('Pearson cross-correlation')
@@ -233,68 +228,25 @@ class PoissonTimeShiftedData(object):
 
 
 if __name__ == '__main__':
-    from data.reshape_data import reshape_from_batches
-    from utils.funcs import pairwise_moments
-    import matplotlib.pyplot as plt
-    from boltzmann_machines.cp_rtrbm import RTRBM
-    from tqdm import tqdm
 
-    n_v = 100
-    n_h = 10
-    delay = 1  # temporal dynamics
-    frequency_range = [5, 10]
-    phase_range = [0, torch.pi]
-    amplitude_range = [0.2, 0.5]
-    sp = 1e-4
+    n_h = 3
+    delay = 12
+    norm = 0.36
 
-    hiddens_range = [2, 5, 8, 10, 12, 15, 20]
-    N = 3  # number of RTRBMs per run
+    frequency_range = [5, 10]  # freq of sinus wave, randomly chosen
+    amplitude_range = [0.4, 0.5]  # max amplitude range, randomly chosen
+    phase_range = [0, torch.pi]  # phase shift of sinus wave, randomly chosen
+    temporal_connections = torch.tensor([
+        [0, -1, 1],
+        [1, 0, -1],
+        [-1, 1, 0]
+    ], dtype=torch.float)
+    s = PoissonTimeShiftedData(
+        neurons_per_population=20,
+        n_populations=n_h, n_batches=1,
+        time_steps_per_batch=120,
+        fr_mode='gaussian', delay=delay, temporal_connections=temporal_connections, norm=norm,
+        frequency_range=frequency_range, amplitude_range=amplitude_range, phase_range=phase_range, std_gaus=[1, 2])
 
-    temporal_connections = torch.randn(n_h, n_h) / n_h
-
-    poisson = PoissonTimeShiftedData(
-        neurons_per_population=n_v // n_h, n_populations=n_h, n_batches=100, time_steps_per_batch=100,
-        fr_mode='gaussian', delay=delay, temporal_connections=temporal_connections, norm=1,
-        frequency_range=frequency_range, amplitude_range=amplitude_range, phase_range=phase_range
-    )
-
-    poisson.plot_stats()
-    plt.show()
-
-    rtrbm = RTRBM(poisson.data, N_H=n_h, device="cpu", debug_mode=False)
-    rtrbm.learn(batch_size=10, n_epochs=200, max_lr=1e-3, min_lr=8e-4, lr_schedule='geometric_decay', CDk=10, mom=0.6,
-                wc=0.0002, sp=0, x=1)
-
-    T, n_batches = poisson.data.shape[1], poisson.data.shape[2]
-    vs = torch.zeros(n_v, T, n_batches)
-    for batch in tqdm(range(n_batches)):
-        vs[:, :, batch], _ = rtrbm.infer(poisson.data[:, :T // 2, batch], mode=1, pre_gibbs_k=100, gibbs_k=100,
-                                         disable_tqdm=True)
-
-    vs_ = reshape_from_batches(vs)
-    test_ = reshape_from_batches(poisson.data)
-    true_pairwise = pairwise_moments(test_, test_).flatten()
-    sampled_pairwise = pairwise_moments(vs_, vs_).flatten()
-
-    fig, axes = plt.subplots(1, 4, figsize=(20, 4))
-
-    axes[0].imshow(poisson.data[:, T // 2:, 0], cmap=plt.get_cmap('binary'), aspect='auto')
-    axes[1].imshow(vs[:, T // 2:, 0], cmap=plt.get_cmap('binary'), aspect='auto')
-    axes[2].plot(torch.mean(vs[:, T // 2:, :], (1, 2)), torch.mean(poisson.data[:, T // 2:, :], (1, 2)), '.')
-    axes[3].plot(true_pairwise, sampled_pairwise, '.')
-
-    axes[0].set_title('True (test) data', fontsize=18)
-    axes[0].set_xlabel('Time', fontsize=16)
-    axes[0].set_ylabel('$v$', fontsize=16)
-    axes[1].set_title('Sampled data', fontsize=18)
-    axes[1].set_xlabel('Time', fontsize=16)
-    axes[1].set_ylabel('$v$', fontsize=16)
-    axes[2].set_title('$<v_i>$', fontsize=18)
-    axes[2].set_xlabel('True', fontsize=16)
-    axes[2].set_ylabel('Sampled', fontsize=16)
-    axes[3].set_title('$<v_iv_j>$', fontsize=18)
-    axes[3].set_xlabel('True', fontsize=16)
-    axes[3].set_ylabel('Sampled', fontsize=16)
-
-    plt.tight_layout()
+    axes = s.plot_stats(T=100)
     plt.show()
