@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arc, RegularPolygon
 from matplotlib.animation import FuncAnimation
+from matplotlib.widgets import Slider
 import torch
 import numpy as np
 
@@ -11,6 +12,88 @@ def receptive_fields(weights, coordinates, only_max_conn=True):
         return (torch.matmul(torch.abs(weights) * idx, coordinates).T / torch.sum(torch.abs(weights * idx), 1)).T
     else:
         return (torch.matmul(torch.abs(weights), coordinates).T / torch.sum(torch.abs(weights), 1)).T
+
+
+class MapZebra(object):
+    """This is a class to plot the neural assemblies of a trained (RT)RBM.
+    It has a slider that is used to change the hidden unit and a plots for each dimension.
+    To use, first create an instance of the class by giving the hidden-visible weights and the 3-dimensional coordinates
+    of the neurons. Then call MapZebra.plot() to create the plot.
+    It probably does not work in jupyter notebook.
+    """
+    def __init__(self, weights, coordinates):
+        self.weights = np.array(weights)
+        self.coordinates = np.array(coordinates)
+        self.n_hidden, self.n_visible = self.weights.shape
+
+        # get min and max coordinate values
+        self.x_min = np.min(self.coordinates[:, 0])
+        self.x_max = np.max(self.coordinates[:, 0])
+        self.y_min = np.min(self.coordinates[:, 1])
+        self.y_max = np.max(self.coordinates[:, 1])
+        self.z_min = np.min(self.coordinates[:, 2])
+        self.z_max = np.max(self.coordinates[:, 2])
+
+        # get the strongest connecting hidden unit
+        self.strongest_connections = np.argmax(np.abs(weights), 0)
+
+        # initialize plot
+        self.fig, self.axes = plt.subplots(1, 3, figsize=(15, 4))
+        self.axes[0].plot(coordinates[:, 0], coordinates[:, 1], '.', ms=1)
+        self.axes[1].plot(coordinates[:, 1], coordinates[:, 2], '.', ms=1)
+        self.axes[2].plot(coordinates[:, 0], coordinates[:, 2], '.', ms=1)
+        self.set_limits_labels()
+
+        # adjust the main plot to make room for the sliders
+        plt.subplots_adjust(left=0.25, bottom=0.25)
+
+        # Make a horizontal slider to control the hidden unit
+        self.axSlider = plt.axes([0.25, 0.1, 0.65, 0.03])
+
+        self.slider = Slider(
+            ax=self.axSlider,
+            label='#hidden unit',
+            valmin=0,
+            valmax=self.n_hidden + 1,
+            valinit=0,
+            valfmt='%d',
+        )
+
+        self.slider.on_changed(self.update)
+
+    def update(self, hidden_unit):
+        for ax in self.axes:
+            ax.cla()
+        hidden_unit = int(hidden_unit - 1)
+        if hidden_unit == -1:
+            self.axes[0].plot(self.coordinates[:, 0], self.coordinates[:, 1], '.', ms=1)
+            self.axes[1].plot(self.coordinates[:, 1], self.coordinates[:, 2], '.', ms=1)
+            self.axes[2].plot(self.coordinates[:, 0], self.coordinates[:, 2], '.', ms=1)
+        else:
+            visible_idx, = np.where(self.strongest_connections == hidden_unit)
+            self.axes[0].cla()
+            self.axes[0].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 1], '.', ms=1)
+            self.axes[1].plot(self.coordinates[visible_idx, 1], self.coordinates[visible_idx, 2], '.', ms=1)
+            self.axes[2].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 2], '.', ms=1)
+        self.set_limits_labels()
+        self.fig.canvas.draw_idle()
+
+    def set_limits_labels(self):
+        self.axes[0].set_xlim([self.x_min, self.x_max])
+        self.axes[0].set_ylim([self.y_min, self.y_max])
+        self.axes[1].set_xlim([self.y_min, self.y_max])
+        self.axes[1].set_ylim([self.z_min, self.z_max])
+        self.axes[2].set_xlim([self.x_min, self.x_max])
+        self.axes[2].set_ylim([self.z_min, self.z_max])
+        self.axes[0].set_xlabel('x')
+        self.axes[0].set_ylabel('y')
+        self.axes[1].set_xlabel('y')
+        self.axes[1].set_ylabel('z')
+        self.axes[2].set_xlabel('x')
+        self.axes[2].set_ylabel('z')
+
+    def plot(self):
+        return self.fig.show()
 
 
 class MapHiddenStructure(object):
@@ -112,7 +195,6 @@ class MapHiddenStructure(object):
 
 
 if __name__ == '__main__':
-    from map_hidden_structure import MapHiddenStructure
     dir = '../data/artificial data/rtrbm.pt'
     x = MapHiddenStructure(dir=dir)
     ax = x.draw_final_structure()
