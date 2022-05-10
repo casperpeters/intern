@@ -195,14 +195,26 @@ class MapHiddenStructure(object):
 
 
 if __name__ == '__main__':
-    from data.load_data import get_split_data
-    _, C = get_split_data(N_V=35000, which='thijs')
-    dir = '../results/full_brain/rtrbm_1000epo_1e-2sp_thijs.pt'
-    rtrbm = torch.load(dir)
-    W = rtrbm.W.detach().cpu()
-    lim = 1e-1
-    W[W > lim] = lim
-    W[W < -lim] = -lim
-    x = MapZebra(W[:, :100], C[:100, :])
-    x.plot()
-    c=1
+
+    # _, C = get_split_data(N_V=35000, which='thijs', data_path=r'D:\OneDrive\RU\Intern\rtrbm_master\cRBM Jerome+Thijs\crbm_zebrafish_spontaneous_data\neural_recordings\full_calcium_data_sets\20180706_Run04_spontaneous_rbm0.h5')
+    # dir = '../results/full brain/rtrbm_1000epo_1e-2sp_thijs.pt'
+    # rtrbm = torch.load(dir)
+    # W = rtrbm.W.detach().cpu()
+    # lim = 1e-1
+    # W[W > lim] = lim
+    # W[W < -lim] = -lim
+    # x = MapZebra(W, C)
+    # x.plot()
+    from data.load_data import get_split_data, load_data_thijs
+    import sys
+
+    sys.path.append(r'D:\OneDrive\RU\Intern\rtrbm_master\PGM\source')
+    sys.path.append(r'D:\OneDrive\RU\Intern\rtrbm_master\PGM\utilities')
+    import RBM_utils
+    RBM = RBM_utils.loadRBM('D:/OneDrive/RU/Intern/rtrbm_master/cRBM Jerome+Thijs/crbm_zebrafish_spontaneous_data/cRBM_models/RBM3_20180912-Run01-spontaneous-rbm2_wb_test-segs-267-nseg10_M200_l1-2e-02_duration208093s_timestamp2020-05-16-0844.data')
+
+    spikes, coordinates, times = load_data_thijs(
+        data_path=r'D:\OneDrive\RU\Intern\rtrbm_master\cRBM Jerome+Thijs\crbm_zebrafish_spontaneous_data\neural_recordings\full_calcium_data_sets\20180706_Run04_spontaneous_rbm0.h5')
+
+    map = MapZebra(weights=RBM.weights, coordinates=coordinates)
+    map.plot()
