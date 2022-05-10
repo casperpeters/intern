@@ -195,7 +195,14 @@ class MapHiddenStructure(object):
 
 
 if __name__ == '__main__':
-    dir = '../data/artificial data/rtrbm.pt'
-    x = MapHiddenStructure(dir=dir)
-    ax = x.draw_final_structure()
-    plt.show()
+    from data.load_data import get_split_data
+    _, C = get_split_data(N_V=35000, which='thijs')
+    dir = '../results/full_brain/rtrbm_1000epo_1e-2sp_thijs.pt'
+    rtrbm = torch.load(dir)
+    W = rtrbm.W.detach().cpu()
+    lim = 1e-1
+    W[W > lim] = lim
+    W[W < -lim] = -lim
+    x = MapZebra(W[:, :100], C[:100, :])
+    x.plot()
+    c=1
