@@ -95,12 +95,20 @@ def calculate_moments(vt, ht, vs, hs, n=1000, m=50000, k=0):
         vt = vt[idx, :]
         vs = vs[idx, :]
 
-    vvt = np.array(torch.matmul(vt[:, :-k], vt[:, k:].T) / vt.shape[1]).flatten()
-    vvs = np.array(torch.matmul(vs[:, :-k], vs[:, k:].T) / vs.shape[1]).flatten()
-    vht = np.array(torch.matmul(vt[:, :-k], ht[:, k:].T) / vt.shape[1]).flatten()
-    vhs = np.array(torch.matmul(vs[:, :-k], hs[:, k:].T) / vs.shape[1]).flatten()
-    hht = np.array(torch.matmul(ht[:, :-k], ht[:, k:].T) / ht.shape[1]).flatten()
-    hhs = np.array(torch.matmul(hs[:, :-k], hs[:, k:].T) / hs.shape[1]).flatten()
+    if k == 0:
+        vvt = np.array(torch.matmul(vt, vt.T) / (vt.shape[1] - k)).flatten()
+        vvs = np.array(torch.matmul(vs, vs.T) / (vs.shape[1] - k)).flatten()
+        vht = np.array(torch.matmul(vt, ht.T) / (vt.shape[1] - k)).flatten()
+        vhs = np.array(torch.matmul(vs, hs.T) / (vs.shape[1] - k)).flatten()
+        hht = np.array(torch.matmul(ht, ht.T) / (ht.shape[1] - k)).flatten()
+        hhs = np.array(torch.matmul(hs, hs.T) / (hs.shape[1] - k)).flatten()
+    elif k > 0:
+        vvt = np.array(torch.matmul(vt[:, :-k], vt[:, k:].T) / (vt.shape[1] - k)).flatten()
+        vvs = np.array(torch.matmul(vs[:, :-k], vs[:, k:].T) / (vs.shape[1] - k)).flatten()
+        vht = np.array(torch.matmul(vt[:, :-k], ht[:, k:].T) / (vt.shape[1] - k)).flatten()
+        vhs = np.array(torch.matmul(vs[:, :-k], hs[:, k:].T) / (vs.shape[1] - k)).flatten()
+        hht = np.array(torch.matmul(ht[:, :-k], ht[:, k:].T) / (ht.shape[1] - k)).flatten()
+        hhs = np.array(torch.matmul(hs[:, :-k], hs[:, k:].T) / (hs.shape[1] - k)).flatten()
 
     if vvt.shape[0] > m:
         idx = torch.randperm(vvt.shape[0])[:m]
