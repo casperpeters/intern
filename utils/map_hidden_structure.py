@@ -1,3 +1,5 @@
+import os
+
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arc, RegularPolygon
 from matplotlib.animation import FuncAnimation
@@ -21,10 +23,11 @@ class MapZebra(object):
     of the neurons. Then call MapZebra.plot() to create the plot.
     It probably does not work in jupyter notebook.
     """
-    def __init__(self, weights, coordinates):
+    def __init__(self, weights, coordinates, threshold=None):
         self.weights = np.array(weights)
         self.coordinates = np.array(coordinates)
         self.n_hidden, self.n_visible = self.weights.shape
+        self.threshold = threshold
 
         # get min and max coordinate values
         self.x_min = np.min(self.coordinates[:, 0])
@@ -70,7 +73,9 @@ class MapZebra(object):
             self.axes[1].plot(self.coordinates[:, 1], self.coordinates[:, 2], '.', ms=1)
             self.axes[2].plot(self.coordinates[:, 0], self.coordinates[:, 2], '.', ms=1)
         else:
-            visible_idx, = np.where(self.strongest_connections == hidden_unit)
+            visible_idx = self.strongest_connections == hidden_unit
+            if self.threshold is not None:
+                visible_idx *= np.abs(self.weights[hidden_unit, :]) > self.threshold
             self.axes[0].cla()
             self.axes[0].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 1], '.', ms=1)
             self.axes[1].plot(self.coordinates[visible_idx, 1], self.coordinates[visible_idx, 2], '.', ms=1)
@@ -211,10 +216,17 @@ if __name__ == '__main__':
     sys.path.append(r'D:\OneDrive\RU\Intern\rtrbm_master\PGM\source')
     sys.path.append(r'D:\OneDrive\RU\Intern\rtrbm_master\PGM\utilities')
     import RBM_utils
-    RBM = RBM_utils.loadRBM('D:/OneDrive/RU/Intern/rtrbm_master/cRBM Jerome+Thijs/crbm_zebrafish_spontaneous_data/cRBM_models/RBM3_20180912-Run01-spontaneous-rbm2_wb_test-segs-267-nseg10_M200_l1-2e-02_duration208093s_timestamp2020-05-16-0844.data')
+    os.chdir(r'D:/OneDrive/RU\Intern/rtrbm_master/cRBM Jerome+Thijs/crbm_zebrafish_spontaneous_data')
+    RBM = RBM_utils.loadRBM(
+        'cRBM_models/RBM3_20180912-Run01-spontaneous-rbm2_wb_test-segs-267-nseg10_M200_l1-2e-02_duration208093s_timestamp2020-05-16-0844.data')
 
-    spikes, coordinates, times = load_data_thijs(
-        data_path=r'D:\OneDrive\RU\Intern\rtrbm_master\cRBM Jerome+Thijs\crbm_zebrafish_spontaneous_data\neural_recordings\full_calcium_data_sets\20180706_Run04_spontaneous_rbm0.h5')
+    _, coordinates, _ = load_data_thijs(
+        data_path=r'neural_recordings\full_calcium_data_sets\20180912_Run01_spontaneous_rbm2.h5')
 
-    map = MapZebra(weights=RBM.weights, coordinates=coordinates)
+    spikes = np.load(
+        r'neural_recordings\full_spike-only_data_sets\20180912_Run01_spontaneous_rbm2__wb_spikes_only.npy')
+
+    spikes_idx = np.load(r'neural_recordings\full_spike-only_data_sets\spike_idx.npy')
+
+    map = MapZebra(weights=RBM.weights, coordinates=coordinates[spikes_idx, :], threshold=.1)
     map.plot()
