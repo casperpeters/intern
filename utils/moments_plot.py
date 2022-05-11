@@ -10,9 +10,9 @@ import matplotlib.pyplot as plt
 from data.load_data import load_data
 
 
-def correlations(results):
+def correlations(results, k):
     vt, vs, ht, hs = results
-    vvt, vvs, vht, vhs, hht, hhs = calculate_moments(vt, ht, vs, hs)
+    vvt, vvs, vht, vhs, hht, hhs = calculate_moments(vt, ht, vs, hs, k=k)
     r_v, _ = pearsonr(torch.mean(vt, 1), torch.mean(vs, 1))
     r_h, _ = pearsonr(torch.mean(ht, 1), torch.mean(hs, 1))
     r_vv, _ = pearsonr(vvt, vvs)
@@ -24,22 +24,27 @@ def correlations(results):
 def infer_and_get_moments_plot(dir,
                                test=None,
                                pre_gibbs_k=0, gibbs_k=1, mode=1,
-                               n_batches=None, n=1000, m=50000,
+                               n_batches=None, n=1000, m=50000, k=0,
                                machine='rtrbm', plot=True,
                                ax=None, fig=None):
 
     rtrbm = torch.load(dir, map_location='cpu')
     rtrbm.device = 'cpu'
-
+    n_h, n_v = rtrbm.W.shape
     if test is None:
         test = rtrbm.V.clone().detach()
     T = test.shape[1]
     if n_batches is None:
         n_batches = test.shape[2]
     vt = test.clone().detach()
-    ht = torch.empty(rtrbm.N_H, T, n_batches)
-    vs = torch.empty(rtrbm.N_V, T, n_batches)
-    hs = torch.empty(rtrbm.N_H, T, n_batches)
+    ht = torch.empty(n_h, T, n_batches)
+    vs = torch.empty(n_v, T, n_batches)
+    hs = torch.empty(n_h, T, n_batches)
+
+    if machine == 'rtrbm_autograd':
+        rt = rtrbm._sample_r_given_v_over_time(test)
+        h, _ = rtrbm._parallel_sample_r_h_given_v(test, rt)
+        ht = h.clone().detach()
 
     for i in tqdm(range(n_batches)):
         if machine == 'rtrbm':
@@ -49,8 +54,10 @@ def infer_and_get_moments_plot(dir,
         elif machine == 'rbm':
             x, _ = rtrbm.visible_to_hidden(test[:, :, i])
             ht[:, :, i] = x.clone().detach()
+        elif machine == 'rtrbm_autograd':
+            pass
         else:
-            raise ValueError('Machine must be "rbm" or "rtrbm"')
+            raise ValueError('Machine must be "rbm", "rtrbm" or "rtrbm_autograd"')
 
         v, h = rtrbm.sample(test[:, 0, i], chain=test.shape[1], pre_gibbs_k=pre_gibbs_k,
                             gibbs_k=gibbs_k, mode=mode, disable_tqdm=True)
@@ -62,7 +69,7 @@ def infer_and_get_moments_plot(dir,
     vs = reshape_from_batches(vs)
     hs = reshape_from_batches(hs)
 
-    vvt, vvs, vht, vhs, hht, hhs = calculate_moments(vt, ht, vs, hs, n=n, m=m)
+    vvt, vvs, vht, vhs, hht, hhs = calculate_moments(vt, ht, vs, hs, n=n, m=m, k=k)
 
     vt_mean = np.mean(np.array(vt), axis=1)
     vs_mean = np.mean(np.array(vs), axis=1)
@@ -82,18 +89,26 @@ def infer_and_get_moments_plot(dir,
         return [vt, vs, ht, hs], [r2v, r2v2, r2h, r2h2, r2vh]
 
 
-def calculate_moments(vt, ht, vs, hs, n=1000, m=50000):
+def calculate_moments(vt, ht, vs, hs, n=1000, m=50000, k=0):
     if vt.shape[0] > n:
         idx = torch.randperm(vt.shape[0])[:n]
         vt = vt[idx, :]
         vs = vs[idx, :]
 
-    vvt = np.array(torch.matmul(vt, vt.T) / vt.shape[1]).flatten()
-    vvs = np.array(torch.matmul(vs, vs.T) / vs.shape[1]).flatten()
-    vht = np.array(torch.matmul(vt, ht.T) / vt.shape[1]).flatten()
-    vhs = np.array(torch.matmul(vs, hs.T) / vs.shape[1]).flatten()
-    hht = np.array(torch.matmul(ht, ht.T) / ht.shape[1]).flatten()
-    hhs = np.array(torch.matmul(hs, hs.T) / hs.shape[1]).flatten()
+    if k == 0:
+        vvt = np.array(torch.matmul(vt, vt.T) / (vt.shape[1] - k)).flatten()
+        vvs = np.array(torch.matmul(vs, vs.T) / (vs.shape[1] - k)).flatten()
+        vht = np.array(torch.matmul(vt, ht.T) / (vt.shape[1] - k)).flatten()
+        vhs = np.array(torch.matmul(vs, hs.T) / (vs.shape[1] - k)).flatten()
+        hht = np.array(torch.matmul(ht, ht.T) / (ht.shape[1] - k)).flatten()
+        hhs = np.array(torch.matmul(hs, hs.T) / (hs.shape[1] - k)).flatten()
+    elif k > 0:
+        vvt = np.array(torch.matmul(vt[:, :-k], vt[:, k:].T) / (vt.shape[1] - k)).flatten()
+        vvs = np.array(torch.matmul(vs[:, :-k], vs[:, k:].T) / (vs.shape[1] - k)).flatten()
+        vht = np.array(torch.matmul(vt[:, :-k], ht[:, k:].T) / (vt.shape[1] - k)).flatten()
+        vhs = np.array(torch.matmul(vs[:, :-k], hs[:, k:].T) / (vs.shape[1] - k)).flatten()
+        hht = np.array(torch.matmul(ht[:, :-k], ht[:, k:].T) / (ht.shape[1] - k)).flatten()
+        hhs = np.array(torch.matmul(hs[:, :-k], hs[:, k:].T) / (hs.shape[1] - k)).flatten()
 
     if vvt.shape[0] > m:
         idx = torch.randperm(vvt.shape[0])[:m]
