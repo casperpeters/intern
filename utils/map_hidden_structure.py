@@ -74,10 +74,11 @@ class MapZebra(object):
             visible_idx = self.strongest_connections == hidden_unit
             if self.threshold is not None:
                 visible_idx *= np.abs(self.weights[hidden_unit, :]) > self.threshold
-            self.axes[0].cla()
+                visible_idx = visible_idx.type(torch.bool)
             self.axes[0].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 1], '.', ms=1)
             self.axes[1].plot(self.coordinates[visible_idx, 1], self.coordinates[visible_idx, 2], '.', ms=1)
             self.axes[2].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 2], '.', ms=1)
+        self.visible_idx = visible_idx
         self.set_limits_labels()
         self.fig.canvas.draw_idle()
 
@@ -199,9 +200,9 @@ class MapHiddenStructure(object):
 
 if __name__ == '__main__':
     from data.load_data import get_split_data
-    _, _, C = get_split_data(N_V=35000, which='thijs')
-    dir = '../results/full_brain/rtrbm_1000epo_1e-2sp_thijs.pt'
+    _, _, C = get_split_data(N_V=35000, which='thijs', data_path='../cRBM Jerome+Thijs/crbm_zebrafish_spontaneous_data/neural_recordings/full_calcium_data_sets/20180706_Run04_spontaneous_rbm0.h5')
+    dir = '../results/full brain/rtrbm_200epo_3e-2sp_thijs.pt'
     rtrbm = torch.load(dir)
     W = rtrbm.W.detach().cpu()
-    x = MapZebra(W, C, threshold=.004)
+    x = MapZebra(W, C, threshold=.1)
     x.plot()
