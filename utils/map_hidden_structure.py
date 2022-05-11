@@ -1,5 +1,3 @@
-import os
-
 import matplotlib.pyplot as plt
 from matplotlib.patches import Arc, RegularPolygon
 from matplotlib.animation import FuncAnimation
@@ -200,33 +198,10 @@ class MapHiddenStructure(object):
 
 
 if __name__ == '__main__':
-
-    # _, C = get_split_data(N_V=35000, which='thijs', data_path=r'D:\OneDrive\RU\Intern\rtrbm_master\cRBM Jerome+Thijs\crbm_zebrafish_spontaneous_data\neural_recordings\full_calcium_data_sets\20180706_Run04_spontaneous_rbm0.h5')
-    # dir = '../results/full brain/rtrbm_1000epo_1e-2sp_thijs.pt'
-    # rtrbm = torch.load(dir)
-    # W = rtrbm.W.detach().cpu()
-    # lim = 1e-1
-    # W[W > lim] = lim
-    # W[W < -lim] = -lim
-    # x = MapZebra(W, C)
-    # x.plot()
-    from data.load_data import get_split_data, load_data_thijs
-    import sys
-
-    sys.path.append(r'D:\OneDrive\RU\Intern\rtrbm_master\PGM\source')
-    sys.path.append(r'D:\OneDrive\RU\Intern\rtrbm_master\PGM\utilities')
-    import RBM_utils
-    os.chdir(r'D:/OneDrive/RU\Intern/rtrbm_master/cRBM Jerome+Thijs/crbm_zebrafish_spontaneous_data')
-    RBM = RBM_utils.loadRBM(
-        'cRBM_models/RBM3_20180912-Run01-spontaneous-rbm2_wb_test-segs-267-nseg10_M200_l1-2e-02_duration208093s_timestamp2020-05-16-0844.data')
-
-    _, coordinates, _ = load_data_thijs(
-        data_path=r'neural_recordings\full_calcium_data_sets\20180912_Run01_spontaneous_rbm2.h5')
-
-    spikes = np.load(
-        r'neural_recordings\full_spike-only_data_sets\20180912_Run01_spontaneous_rbm2__wb_spikes_only.npy')
-
-    spikes_idx = np.load(r'neural_recordings\full_spike-only_data_sets\spike_idx.npy')
-
-    map = MapZebra(weights=RBM.weights, coordinates=coordinates[spikes_idx, :], threshold=.1)
-    map.plot()
+    from data.load_data import get_split_data
+    _, _, C = get_split_data(N_V=35000, which='thijs')
+    dir = '../results/full_brain/rtrbm_1000epo_1e-2sp_thijs.pt'
+    rtrbm = torch.load(dir)
+    W = rtrbm.W.detach().cpu()
+    x = MapZebra(W, C, threshold=.004)
+    x.plot()
