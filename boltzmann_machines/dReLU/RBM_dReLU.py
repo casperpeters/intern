@@ -374,55 +374,54 @@ class RBM(object):
 
 
 
-import sys
-sys.path.append(r'D:\RU\OneDrive\Intern\rtrbm_master')
+if __name__=='__main__':
+    from data.mock_data import create_BB
+    from data.poisson_data_v import PoissonTimeShiftedData
+    from data.reshape_data import reshape
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    from tqdm import tqdm
 
-from utils.plots import *
-from data.mock_data import *
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+    # data = create_BB(N_V=16, T=320, n_samples=10, width_vec=[4, 5, 6], velocity_vec=[1, 2])
+    n_h = 3
+    temporal_connections = torch.tensor([
+        [0, -1, 1],
+        [1, 0, -1],
+        [-1, 1, 0]
+    ]).float()
+    gaus = PoissonTimeShiftedData(
+        neurons_per_population=20,
+        n_populations=n_h, n_batches=25,
+        time_steps_per_batch=1000,
+        fr_mode='gaussian', delay=1, temporal_connections=temporal_connections, norm=0.36, spread_fr=[0.5, 1.5])
 
-N_H = 4
-# spikes, coordinates, pop_idx = create_complex_artificial_data(n_neurons=40,
-#                                    t_max=250,
-#                                    n_populations=4,
-#                                    mean_firing_rate=0.2,
-#                                    population_correlations=[0.1, 0.6, 0.6, 0.8],
-#                                    neuron_population_correlation=[0.6, 0.9, 0.9, 0.9],
-#                                    time_shifts=None,
-#                                    permute=True
-#                                    )
-spikes = create_BB(N_V=16, T=32, n_samples=64, width_vec=[4, 5, 6, 7], velocity_vec=[1, 2], boundary=False, r=2)
-spikes = torch.tensor(spikes)
-sns.heatmap(spikes[:, :, 0])
-plt.show()
-rbm = RBM(spikes, N_H=N_H, device="cpu")
-rbm.learn(batchsize=10, n_epochs=100, lr=1e-3, lr_end=5e-4, start_decay=50, mom=0.9, wc=0, sp=None, x=2)
+    gaus.plot_stats(T=100)
+    plt.show()
+    data = reshape(gaus.data)
+    data = reshape(data, T=100, n_batches=250)
+    train, test = data[..., :200], data[..., 200:]
 
+    rbm = RBM(train, N_H=n_h, device="cpu")
+    rbm.learn(batchsize=10, n_epochs=100, lr=1e-3, lr_end=9e-4, start_decay=0, mom=0, wc=0, sp=None, x=0)
 
-#vt_infer, rt_infer = rbm.sample(torch.tensor(voxel_spike[:, 1], dtype=torch.float))
-#sns.heatmap(vt_infer.cpu())
-#plt.show()
+    plt.plot(rbm.errors)
 
-plt.plot(rbm.errors.cpu())
-plt.show()
+    # vt_infer, rt_infer = rbm.sample(test, dtype=torch.float))
+    # sns.heatmap(vt_infer.cpu())
+    # plt.show()
+    #
+    # plt.plot(rbm.errors.cpu())
+    # plt.show()
+    #
+    # h = torch.zeros(N_H, spikes.shape[1])
+    # for i in range(spikes.shape[1]):
+    #     h[:, i] = rbm.visible_to_hidden(spikes[:, i].float())
+    # plot_effective_coupling_VH(rbm.W, spikes.float(), h)
+    # plt.show()
+    # v_sampled, h_sampled = rbm.sample(data[:, 0].float(), pre_gibbs_k=100, gibbs_k=20, mode=1, chain=50)
+    # plot_true_sampled(data.float(), h, v_sampled, h_sampled)
+    # plt.show()
+    # sns.kdeplot(np.array(h.ravel().cpu()), bw_adjust=0.1)
+    # plt.show()
 
-h = torch.zeros(N_H, spikes.shape[1])
-for i in range(spikes.shape[1]):
-    h[:, i] = rbm.visible_to_hidden(spikes[:, i].float())
-plot_effective_coupling_VH(rbm.W, spikes.float(), h)
-plt.show()
-#v_sampled, h_sampled = rbm.sample(data[:, 0].float(), pre_gibbs_k=100, gibbs_k=20, mode=1, chain=50)
-#plot_true_sampled(data.float(), h, v_sampled, h_sampled)
-#plt.show()
-sns.kdeplot(np.array(h.ravel().cpu()), bw_adjust=0.1)
-plt.show()
-
-
-fig, ax = plt.subplots(8, 1, figsize=(8,32))
-for i in range(N_H):
-    sns.kdeplot(np.array(h[i, :].ravel().cpu()), bw_adjust=0.1, ax=ax[i])
-plt.show()
 
