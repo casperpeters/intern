@@ -46,5 +46,8 @@ def get_split_data(N_V, train_batches=80, test_batches=20, which='chen'):
     data = spikes[sort_idx, :] > .15
     data = torch.tensor(data, dtype=torch.float)
 
+    # split into trian and test set
+    train, test = train_test_split(data[:N_V, :], train_batches=train_batches, test_batches=test_batches)
+
     # split in 80 train batches and 20 test batches
-    return train_test_split(data[:N_V, :], train_batches=train_batches, test_batches=test_batches)
+    return train, test, coordinates[:N_V, :]

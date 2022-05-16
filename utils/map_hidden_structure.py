@@ -21,10 +21,11 @@ class MapZebra(object):
     of the neurons. Then call MapZebra.plot() to create the plot.
     It probably does not work in jupyter notebook.
     """
-    def __init__(self, weights, coordinates):
+    def __init__(self, weights, coordinates, threshold=None):
         self.weights = np.array(weights)
         self.coordinates = np.array(coordinates)
         self.n_hidden, self.n_visible = self.weights.shape
+        self.threshold = threshold
 
         # get min and max coordinate values
         self.x_min = np.min(self.coordinates[:, 0])
@@ -70,11 +71,14 @@ class MapZebra(object):
             self.axes[1].plot(self.coordinates[:, 1], self.coordinates[:, 2], '.', ms=1)
             self.axes[2].plot(self.coordinates[:, 0], self.coordinates[:, 2], '.', ms=1)
         else:
-            visible_idx, = np.where(self.strongest_connections == hidden_unit)
-            self.axes[0].cla()
+            visible_idx = self.strongest_connections == hidden_unit
+            if self.threshold is not None:
+                visible_idx *= np.abs(self.weights[hidden_unit, :]) > self.threshold
+                visible_idx = visible_idx.type(torch.bool)
             self.axes[0].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 1], '.', ms=1)
             self.axes[1].plot(self.coordinates[visible_idx, 1], self.coordinates[visible_idx, 2], '.', ms=1)
             self.axes[2].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 2], '.', ms=1)
+        self.visible_idx = visible_idx
         self.set_limits_labels()
         self.fig.canvas.draw_idle()
 
@@ -195,26 +199,10 @@ class MapHiddenStructure(object):
 
 
 if __name__ == '__main__':
-
-    # _, C = get_split_data(N_V=35000, which='thijs', data_path=r'D:\OneDrive\RU\Intern\rtrbm_master\cRBM Jerome+Thijs\crbm_zebrafish_spontaneous_data\neural_recordings\full_calcium_data_sets\20180706_Run04_spontaneous_rbm0.h5')
-    # dir = '../results/full brain/rtrbm_1000epo_1e-2sp_thijs.pt'
-    # rtrbm = torch.load(dir)
-    # W = rtrbm.W.detach().cpu()
-    # lim = 1e-1
-    # W[W > lim] = lim
-    # W[W < -lim] = -lim
-    # x = MapZebra(W, C)
-    # x.plot()
-    from data.load_data import get_split_data, load_data_thijs
-    import sys
-
-    sys.path.append(r'D:\OneDrive\RU\Intern\rtrbm_master\PGM\source')
-    sys.path.append(r'D:\OneDrive\RU\Intern\rtrbm_master\PGM\utilities')
-    import RBM_utils
-    RBM = RBM_utils.loadRBM('D:/OneDrive/RU/Intern/rtrbm_master/cRBM Jerome+Thijs/crbm_zebrafish_spontaneous_data/cRBM_models/RBM3_20180912-Run01-spontaneous-rbm2_wb_test-segs-267-nseg10_M200_l1-2e-02_duration208093s_timestamp2020-05-16-0844.data')
-
-    spikes, coordinates, times = load_data_thijs(
-        data_path=r'D:\OneDrive\RU\Intern\rtrbm_master\cRBM Jerome+Thijs\crbm_zebrafish_spontaneous_data\neural_recordings\full_calcium_data_sets\20180706_Run04_spontaneous_rbm0.h5')
-
-    map = MapZebra(weights=RBM.weights, coordinates=coordinates)
-    map.plot()
+    from data.load_data import get_split_data
+    _, _, C = get_split_data(N_V=35000, which='thijs', data_path='../cRBM Jerome+Thijs/crbm_zebrafish_spontaneous_data/neural_recordings/full_calcium_data_sets/20180706_Run04_spontaneous_rbm0.h5')
+    dir = '../results/full brain/rtrbm_200epo_3e-2sp_thijs.pt'
+    rtrbm = torch.load(dir)
+    W = rtrbm.W.detach().cpu()
+    x = MapZebra(W, C, threshold=.1)
+    x.plot()
