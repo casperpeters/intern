@@ -89,6 +89,7 @@ class RTRBM(object):
                 self.parameter_history.append([param.detach().clone().cpu() for param in self.params])
             if shuffle_batch:
                 self.V[..., :] = self.V[..., torch.randperm(self.num_samples)]
+
         self.r = rt
 
     def return_params(self):
@@ -109,9 +110,10 @@ class RTRBM(object):
         return r_data, torch.mean(probht_k, 3), torch.mean(vt_k, 3), ht_k, vt_k
 
     def _parallel_sample_r_h_given_v(self, v: torch.Tensor, r: torch.Tensor, beta: float = 1.0) -> torch.Tensor:
-        r0 = torch.sigmoid(beta * (torch.einsum('hv, vb->hb', self.W, v[:, 0, :]) + self.b_init[:, None]))
-        r = torch.sigmoid(beta * (torch.einsum('hv, vTb->hTb', self.W, v[:, 1:, :]) +
-                          torch.einsum('hr, rTb->hTb', self.U, r[:, :-1, :]) + self.b_h[:, None, None]))
+        I0 = self.z_norm(torch.einsum('hv, vb->hb', self.W, v[:, 0, :]))
+        I = self.z_norm(torch.einsum('hv, vTb->hTb', self.W, v[:, 1:, :]))
+        r0 = torch.sigmoid(beta * (I0 + self.b_init[:, None]))
+        r = torch.sigmoid(beta * (I + torch.einsum('hr, rTb->hTb', self.U, r[:, :-1, :]) + self.b_h[:, None, None]))
         r = torch.cat([r0[:, None, :], r], 1)
         return r, torch.bernoulli(r)
 
@@ -122,12 +124,26 @@ class RTRBM(object):
     def _parallel_recurrent_sample_r_given_v(self, v: torch.Tensor, beta: float = 1.0) -> torch.Tensor:
         _, T, n_batch = v.shape
         r = torch.zeros(self.n_hidden, T, n_batch, device=v.device)
-        r[:, 0, :] = torch.sigmoid(beta * (torch.einsum('hv, vb -> hb', self.W, v[:, 0, :]) + self.b_init[:, None]))
+        I = self.z_norm(torch.einsum('hv, vb -> hb', self.W, v[:, 0, :]))
+        r[:, 0, :] = torch.sigmoid(beta * (I + self.b_init[:, None]))
         for t in range(1, T):
+            I = self.z_norm(torch.einsum('hv, vb -> hb', self.W, v[:, t, :]))
             r[:, t, :] = torch.sigmoid(
-                beta * (torch.einsum('hv, vb -> hb', self.W, v[:, t, :]) + \
-                        torch.einsum('hr, rb -> hb', self.U, r[:, t - 1, :]) + self.b_h[:, None]))
+                beta * (I + torch.einsum('hr, rb -> hb', self.U, r[:, t - 1, :]) + self.b_h[:, None]))
         return r
+
+    def z_norm(self, x: torch.Tensor, eps: float = 1e-15) -> torch.Tensor:
+        if x.ndim == 2:
+            x = (x - torch.mean(x, 1)[:, None]) / (torch.std(x, 1)[:, None] + eps)
+        if x.ndim == 3:
+            x = (x - torch.mean(x, (1, 2))[:, None, None]) / torch.std(x, (1, 2))[:, None, None]
+        return x
+
+    def batch_norm(self, v: torch.Tensor, rt: torch.Tensor):
+        Wh = torch.einsum('hv, hTb->vTb', self.W, rt)
+        Wv = torch.einsum('hv, vTb->hTb', self.W, v)
+        Ur_ = torch.einsum('hr, rTb->hTb', self.U, rt[:, :-1, :])
+
 
     def initialize_grad_updates(self):
         return [torch.zeros_like(param, dtype=self.dtype, device=self.device) for param in self.params]
@@ -307,4 +323,5 @@ if __name__ == '__main__':
     ax[1, 2].set_title('Effective coupling H')
     ax[1, 2].set_xlabel("Hidden nodes [t]")
     ax[1, 2].set_ylabel("Hidden nodes [t]")
+    plt.tight_layout()
     plt.show()
