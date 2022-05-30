@@ -26,8 +26,6 @@ class RTRBM(object):
         else:
             raise ValueError("Data is not correctly defined: Use (n_visible, T) or (n_visible, T, num_samples) dimensions")
         self.n_hidden = n_hidden
-        self.N_V = self.n_visible
-        self.N_H = n_hidden
         self.W = 0.01/self.n_visible * torch.randn(self.n_hidden, self.n_visible, dtype=self.dtype, device=self.device)
         self.U = 0.01/self.n_hidden * torch.randn(self.n_hidden, self.n_hidden, dtype=self.dtype, device=self.device)
         self.b_h = torch.zeros(self.n_hidden, dtype=self.dtype, device=self.device)
@@ -63,9 +61,6 @@ class RTRBM(object):
             lrs = np.array(get_lrs(mode=lr_schedule, n_epochs=n_epochs, **kwargs))
         else:
             lrs = lr * torch.ones(n_epochs)
-        lr_offset = np.array(get_lrs(mode='linear_decay', n_epochs=num_batches, max_lr=1, min_lr=1e-3))
-        self.Wv_mean, self.Wv_std = torch.zeros(self.n_hidden), torch.ones(self.n_hidden)
-        self.Ur_mean, self.Ur_std = torch.zeros(self.n_hidden), torch.ones(self.n_hidden)
 
         self.disable = disable_tqdm
         self.lrs = lrs
@@ -79,15 +74,13 @@ class RTRBM(object):
                 elif self.dim == 3:
                     v_data = self.V[:, :, batch * batch_size : (batch+1) * batch_size].to(self.device)
 
-                r_data = self._parallel_recurrent_sample_r_given_v(v_data)
-
                 if PCD and epoch != 0:
-                    barht, barvt, ht_k, vt_k = self.CD(vt_k[:, :, -1], CDk)
+                    rt, barht, barvt, ht_k, vt_k = self.CD(vt_k[:, :, -1], CDk)
                 else:
-                    barht, barvt, ht_k, vt_k = self.CD(v_data, r_data, CDk)
+                    rt, barht, barvt, ht_k, vt_k = self.CD(v_data, CDk)
 
                 err += torch.sum((v_data - vt_k[..., -1]) ** 2).cpu()
-                self.dparams = self.grad(v_data, r_data, ht_k, vt_k, barvt, barht)
+                self.dparams = self.grad(v_data, rt, ht_k, vt_k, barvt, barht)
 
                 self.update_grad(lr=lrs[epoch], mom=mom, wc=wc, sp=sp, x=x)
 
@@ -97,28 +90,30 @@ class RTRBM(object):
             if shuffle_batch:
                 self.V[..., :] = self.V[..., torch.randperm(self.num_samples)]
 
-        self.r = r_data
+        self.r = rt
 
     def return_params(self):
         return [self.W, self.U, self.b_v, self.b_init, self.b_h, self.errors]
 
-    def CD(self, v_data: torch.Tensor, r_data: torch.Tensor, CDk: int = 1, beta: float = 1.0) -> torch.Tensor:
+    def CD(self, v_data: torch.Tensor, CDk: int = 1, beta: float = 1.0) -> torch.Tensor:
         batchsize = v_data.shape[2]
         ht_k = torch.zeros(self.n_hidden, self.T, batchsize, CDk, dtype=self.dtype, device=self.device)
         probht_k = torch.zeros(self.n_hidden, self.T, batchsize, CDk, dtype=self.dtype, device=self.device)
         vt_k = torch.zeros(self.n_visible, self.T, batchsize, CDk, dtype=self.dtype, device=self.device)
+
         vt_k[..., 0] = v_data.detach().clone()
+        r_data = self._parallel_recurrent_sample_r_given_v(v_data, beta=beta)
         probht_k[..., 0], ht_k[..., 0] = self._parallel_sample_r_h_given_v(v_data, r_data, beta=beta)
         for i in range(1, CDk):
             vt_k[..., i] = self._parallel_sample_v_given_h(ht_k[..., i-1], beta=beta)
             probht_k[..., i], ht_k[..., i] = self._parallel_sample_r_h_given_v(vt_k[..., i], r_data, beta=beta)
-        return torch.mean(probht_k, 3), torch.mean(vt_k, 3), ht_k, vt_k
+        return r_data, torch.mean(probht_k, 3), torch.mean(vt_k, 3), ht_k, vt_k
 
     def _parallel_sample_r_h_given_v(self, v: torch.Tensor, r: torch.Tensor, beta: float = 1.0) -> torch.Tensor:
-
-        r0 = torch.sigmoid(torch.einsum('hv, vb->hb', self.W, v[:, 0, :]) + self.b_init[:, None])
-        r = torch.sigmoid(torch.einsum('hv, vTb->hTb', self.W, v[:, 1:, :]) +\
-                          torch.einsum('hr, rTb->hTb', self.U, r[:, :-1, :]) + self.b_h[:, None, None])
+        I0 = self.z_norm(torch.einsum('hv, vb->hb', self.W, v[:, 0, :]))
+        I = self.z_norm(torch.einsum('hv, vTb->hTb', self.W, v[:, 1:, :]))
+        r0 = torch.sigmoid(beta * (I0 + self.b_init[:, None]))
+        r = torch.sigmoid(beta * (I + torch.einsum('hr, rTb->hTb', self.U, r[:, :-1, :]) + self.b_h[:, None, None]))
         r = torch.cat([r0[:, None, :], r], 1)
         return r, torch.bernoulli(r)
 
@@ -126,32 +121,29 @@ class RTRBM(object):
         v_prob = torch.sigmoid(beta * (torch.einsum('hv, hTb->vTb', self.W, h) + self.b_v[:, None, None]))
         return torch.bernoulli(v_prob)
 
-    def _parallel_recurrent_sample_r_given_v(self, v: torch.Tensor) -> torch.Tensor:
+    def _parallel_recurrent_sample_r_given_v(self, v: torch.Tensor, beta: float = 1.0) -> torch.Tensor:
         _, T, n_batch = v.shape
         r = torch.zeros(self.n_hidden, T, n_batch, device=v.device)
-        r[:, 0, :] = torch.sigmoid(torch.einsum('hv, vb -> hb', self.W, v[:, 0, :]) + self.b_init[:, None])
+        I = self.z_norm(torch.einsum('hv, vb -> hb', self.W, v[:, 0, :]))
+        r[:, 0, :] = torch.sigmoid(beta * (I + self.b_init[:, None]))
         for t in range(1, T):
-            r[:, t, :] = torch.sigmoid(torch.einsum('hv, vb -> hb', self.W, v[:, t, :]) +\
-                torch.einsum('hr, rb -> hb', self.U, r[:, t - 1, :]) + self.b_h[:, None])
+            I = self.z_norm(torch.einsum('hv, vb -> hb', self.W, v[:, t, :]))
+            r[:, t, :] = torch.sigmoid(
+                beta * (I + torch.einsum('hr, rb -> hb', self.U, r[:, t - 1, :]) + self.b_h[:, None]))
         return r
 
-    def visible_to_expected_hidden(self, vt, AF=torch.sigmoid):
-        T = vt.shape[1]
-        rt = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
-        rt[:, 0] = AF(torch.matmul(self.W, vt[:, 0]) + self.b_init)
-        for t in range(1, T):
-            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_h + torch.matmul(self.U, rt[:, t - 1]))
-        return rt
+    def z_norm(self, x: torch.Tensor, eps: float = 1e-15) -> torch.Tensor:
+        if x.ndim == 2:
+            x = (x - torch.mean(x, 1)[:, None]) / (torch.std(x, 1)[:, None] + eps)
+        if x.ndim == 3:
+            x = (x - torch.mean(x, (1, 2))[:, None, None]) / torch.std(x, (1, 2))[:, None, None]
+        return x
 
-    def visible_to_hidden(self, vt, r, AF=torch.sigmoid):
-        T = vt.shape[1]
-        ph_sample = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
-        ph_sample[:, 0] = AF(torch.matmul(self.W, vt[:, 0]) + self.b_init)
-        ph_sample[:, 1:T] = AF(torch.matmul(self.W, vt[:, 1:T]).T + torch.matmul(self.U, r[:, 0:T - 1]).T + self.b_h).T
-        return ph_sample, torch.bernoulli(ph_sample)
+    def batch_norm(self, v: torch.Tensor, rt: torch.Tensor):
+        Wh = torch.einsum('hv, hTb->vTb', self.W, rt)
+        Wv = torch.einsum('hv, vTb->hTb', self.W, v)
+        Ur_ = torch.einsum('hr, rTb->hTb', self.U, rt[:, :-1, :])
 
-    def hidden_to_visible(self, h, AF=torch.sigmoid):
-        return torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_v.T))
 
     def initialize_grad_updates(self):
         return [torch.zeros_like(param, dtype=self.dtype, device=self.device) for param in self.params]
@@ -165,8 +157,9 @@ class RTRBM(object):
         tmp = torch.sum(Dt[:, 2:self.T, :] * (rt[:, 1:self.T - 1, :] * (1 - rt[:, 1:self.T - 1, :])), 1)
         db_H = torch.mean(torch.sum(rt[:, 1:self.T, :], 1) - torch.sum(barht[:, 1:self.T, :], 1) + tmp, 1)
         db_V = torch.mean(torch.sum(vt - barvt, 1), 1)
-        dW = torch.mean(torch.einsum('rTb, vTb -> rvb', Dt[:, 1:self.T, :] * rt[:, 0:self.T - 1, :] * (1 - rt[:, 0:self.T - 1, :]), vt[:, 0:self.T - 1, :]), 2)
-        dW += torch.mean(torch.einsum('rTb, vTb -> rvb', rt, vt) - torch.mean(torch.einsum('rTbk, vTbk -> rvbk', ht_k, vt_k), 3), 2)
+        dW_1 = torch.mean(torch.einsum('rTb, vTb -> rvb', Dt[:, 1:self.T, :] * rt[:, 0:self.T - 1, :] * (1 - rt[:, 0:self.T - 1, :]), vt[:, 0:self.T - 1, :]), 2)
+        dW_2 = torch.mean(torch.einsum('rTb, vTb -> rvb', rt, vt) - torch.mean(torch.einsum('rTbk, vTbk -> rvbk', ht_k, vt_k), 3), 2)
+        dW = dW_1 + dW_2
         dU = torch.mean(torch.einsum('rTb, hTb -> rhb', Dt[:, 2:self.T + 1, :] * (rt[:, 1:self.T, :] * (1 - rt[:, 1:self.T, :])) + rt[:, 1:self.T, :] - barht[:, 1:self.T, :], rt[:, 0:self.T - 1, :]), 2)
         return [dW, dU, db_H, db_V, db_init]
 
@@ -236,39 +229,7 @@ class RTRBM(object):
 
         return vt, rt
 
-    def sample(self, v_start, AF=torch.sigmoid, chain=50, pre_gibbs_k=100, gibbs_k=20, mode=1, disable_tqdm=False):
-        n_hidden, n_visible = self.W.shape
-        vt = torch.zeros(n_visible, chain + 1, dtype=self.dtype, device=self.device)
-        rt = torch.zeros(n_hidden, chain + 1, dtype=self.dtype, device=self.device)
-        rt[:, 0] = AF(torch.matmul(self.W, v_start.T) + self.b_init)
-        vt[:, 0] = v_start
-        for t in tqdm(range(1, chain + 1), disable=disable_tqdm):
-            v = vt[:, t - 1]
-            for kk in range(pre_gibbs_k):
-                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_h + torch.matmul(self.U, rt[:, t - 1]))).T
-                v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_v.T))
 
-            vt_k = torch.zeros(n_visible, gibbs_k, dtype=self.dtype, device=self.device)
-            ht_k = torch.zeros(n_hidden, gibbs_k, dtype=self.dtype, device=self.device)
-            for kk in range(gibbs_k):
-                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_h + torch.matmul(self.U, rt[:, t - 1]))).T
-                v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_v.T))
-                vt_k[:, kk] = v.T
-                ht_k[:, kk] = h.T
-
-            if mode == 1:
-                vt[:, t] = vt_k[:, -1]
-            if mode == 2:
-                vt[:, t] = torch.mean(vt_k, 1)
-            if mode == 3:
-                E = torch.sum(ht_k * (torch.matmul(self.W, vt_k)), 0) + torch.matmul(self.b_v, vt_k) + torch.matmul(
-                    self.b_h, ht_k) + torch.matmul(torch.matmul(self.U, rt[:, t - 1]).T, ht_k)
-                idx = torch.argmax(E)
-                vt[:, t] = vt_k[:, idx]
-
-            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_h + torch.matmul(self.U, rt[:, t - 1]))
-
-        return vt[:, 1:], rt[:, 1:]
 if __name__ == '__main__':
     import os
 
@@ -280,35 +241,28 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from tqdm import tqdm
 
-    data = create_BB(N_V=16, T=320, n_samples=10, width_vec=[4, 5, 6], velocity_vec=[1, 2])
-    # n_hidden = 3
-    # temporal_connections = torch.tensor([
-    #     [0, -1, 1],
-    #     [1, 0, -1],
-    #     [-1, 1, 0]
-    # ]).float()
-    # gaus = PoissonTimeShiftedData(
-    #     neurons_per_population=20,
-    #     n_populations=n_hidden, n_batches=10,
-    #     time_steps_per_batch=100,
-    #     fr_mode='gaussian', delay=1, temporal_connections=temporal_connections, norm=0.36, spread_fr=[0.5, 1.5])
-    #
-    # gaus.plot_stats(T=100)
-    # plt.show()
-    # data = reshape(gaus.data)
-    # data = reshape(data, T=100, n_batches=100)
-    # train, test = data[..., :80], data[..., 80:]
-    train, test = data[..., :8], data[..., 8:]
-    rtrbm = RTRBM(train, n_hidden=8, device="cuda")
-    rtrbm.learn(batch_size=5, n_epochs=10, lr=1e-3, CDk=10, mom=0.6, wc=0.0002, sp=0, x=0)
-    torch.save(rtrbm, r'C:\Users\sebas\RU\intern\legacy\rtrbm')
-    from utils.moments_plot import *
-    _, _, vh = infer_and_get_moments_plot(dir=r'C:\Users\sebas\RU\intern\legacy\rtrbm', test=test, n_batches=2,
-                                          pre_gibbs_k=100, gibbs_k=100, mode=1, n=1000, m=50000)
-    plt.show()
+    # data = create_BB(N_V=16, T=320, n_samples=10, width_vec=[4, 5, 6], velocity_vec=[1, 2])
+    n_hidden = 3
+    temporal_connections = torch.tensor([
+        [0, -1, 1],
+        [1, 0, -1],
+        [-1, 1, 0]
+    ]).float()
+    gaus = PoissonTimeShiftedData(
+        neurons_per_population=20,
+        n_populations=n_hidden, n_batches=25,
+        time_steps_per_batch=1000,
+        fr_mode='gaussian', delay=1, temporal_connections=temporal_connections, norm=0.36, spread_fr=[0.5, 1.5])
 
-    '''
-    vt_infer, rt_infer = rtrbm.infer(data[:, :280, 0], gibbs_k=1)
+    gaus.plot_stats(T=100)
+    plt.show()
+    data = reshape(gaus.data)
+    data = reshape(data, T=100, n_batches=25)
+    train, test = data[..., :200], data[..., 200:]
+    rtrbm = RTRBM(train, n_hidden=3, device="cpu")
+    rtrbm.learn(batch_size=5, n_epochs=1000, lr=1e-3, lr_mode=None, CDk=10, mom=0, wc=0, sp=0, x=0)
+
+    # vt_infer, rt_infer = rtrbm.infer(test, gibbs_k=1)
     #
     # k=1
     # vvt, vvs = [], []
@@ -370,4 +324,4 @@ if __name__ == '__main__':
     ax[1, 2].set_xlabel("Hidden nodes [t]")
     ax[1, 2].set_ylabel("Hidden nodes [t]")
     plt.tight_layout()
-    plt.show()'''
+    plt.show()
