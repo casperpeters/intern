@@ -1,5 +1,10 @@
 """
-This is a practical file for testing quick ideas. Sebastian, please don't adjust this one :)
+Basic implementation of the recurrent temporal restricted boltzmann machine[1].
+
+~ Sebastian Quiroz Monnens
+References
+----------
+[1] : Sutskever, I., Hinton, G.E., & Taylor, G. (2008) The Recurrent Temporal Restricted Boltzmann Machine
 """
 
 import torch
@@ -9,38 +14,165 @@ from optim.lr_scheduler import get_lrs
 
 
 class RTRBM(object):
-    def __init__(self, data, n_hidden=10, device='cuda', no_bias=False, debug_mode=False):
+    def __init__(self, data: torch.Tensor, n_hidden: int = 10, device: str = 'cpu', debug_mode: bool = False):
+
+        '''
+        This function initializes the parameters of the Recurrent Temporal-RBM.
+
+        Parameters
+        ----------
+        data : torch.Tensor
+            The data to be modeled.
+            Shape: (n_visible, T, n_batch) or (n_visible, T)
+        n_hidden : int
+            The number of hidden units.
+        device : str
+            The device to be used for computations.
+        debug_mode : bool
+            If True, the parameter history is stored.
+
+        Returns
+        -------
+        None
+        '''
+
         if not torch.cuda.is_available():
             print('cuda not available, using cpu')
             self.device = 'cpu'
         else:
             self.device = device
-        self.dtype = torch.float
         self.V = data
-        self.dim = self.V.ndim
-        if self.dim == 2:
-            self.n_visible, self.T = self.V.shape
-            self.num_samples = 1
-        elif self.dim == 3:
-            self.n_visible, self.T, self.num_samples = self.V.shape
-        else:
+        if self.V.ndim == 2:
+            self.V = self.V[..., None]
+        self.n_visible, self.T, self.num_samples = self.V.shape
+        if self.V.ndim != 3:
             raise ValueError("Data is not correctly defined: Use (n_visible, T) or (n_visible, T, num_samples) dimensions")
+
         self.n_hidden = n_hidden
-        self.N_V = self.n_visible
-        self.N_H = n_hidden
-        self.W = 0.01/self.n_visible * torch.randn(self.n_hidden, self.n_visible, dtype=self.dtype, device=self.device)
-        self.U = 0.01/self.n_hidden * torch.randn(self.n_hidden, self.n_hidden, dtype=self.dtype, device=self.device)
-        self.b_h = torch.zeros(self.n_hidden, dtype=self.dtype, device=self.device)
-        self.b_v = torch.zeros(self.n_visible, dtype=self.dtype, device=self.device)
-        self.b_init = torch.zeros(self.n_hidden, dtype=self.dtype, device=self.device)
+        self.W = 0.01/self.n_visible * torch.randn(self.n_hidden, self.n_visible, dtype=torch.float, device=self.device)
+        self.U = 0.01/self.n_hidden * torch.randn(self.n_hidden, self.n_hidden, dtype=torch.float, device=self.device)
+        self.b_h = torch.zeros(self.n_hidden, dtype=torch.float, device=self.device)
+        self.b_v = torch.zeros(self.n_visible, dtype=torch.float, device=self.device)
+        self.b_init = torch.zeros(self.n_hidden, dtype=torch.float, device=self.device)
         self.params = [self.W, self.U, self.b_h, self.b_v, self.b_init]
-        self.no_bias = no_bias
         self.debug_mode = debug_mode
         if debug_mode:
             self.parameter_history = []
-
         self.Dparams = self.initialize_grad_updates()
         self.errors = []
+
+    def _parallel_recurrent_sample_r_given_v(self, v: torch.Tensor) -> torch.Tensor:
+        '''
+        Sample the expected recurrent hidden units given the visible units in parallel over batches.
+
+        Parameters
+        ----------
+        v : torch.Tensor
+            The visible units.
+            Shape: (n_visible, T, n_batch)
+
+        Returns
+        -------
+        r : torch.Tensor
+            The expected hiddens units.
+            Shape: (n_hiddens, T, n_batch)
+        '''
+
+        _, T, n_batch = v.shape
+        r = torch.zeros(self.n_hidden, T, n_batch, device=v.device)
+        r[:, 0, :] = torch.sigmoid(torch.einsum('hv, vb -> hb', self.W, v[:, 0, :]) + self.b_init[:, None])
+        for t in range(1, T):
+            r[:, t, :] = torch.sigmoid(torch.einsum('hv, vb -> hb', self.W, v[:, t, :]) +\
+                torch.einsum('hr, rb -> hb', self.U, r[:, t - 1, :]) + self.b_h[:, None])
+        return r
+
+    def _parallel_sample_r_h_given_v(self, v: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
+        '''
+        Sample the expected hidden- and hidden units given the visible units in parallel over batches.
+
+        Parameters
+        ----------
+        v : torch.Tensor
+            The visible units.
+            Shape: (n_visible, T, n_batch)
+
+        Returns
+        -------
+        r : torch.Tensor
+            The expected hiddens units.
+            Shape: (n_hiddens, T, n_batch)
+
+        h : torch.Tensor
+            The hiddens units.
+            Shape: (n_hiddens, T, n_batch)
+        '''
+        r0 = torch.sigmoid(torch.einsum('hv, vb->hb', self.W, v[:, 0, :]) + self.b_init[:, None])
+        r = torch.sigmoid(torch.einsum('hv, vTb->hTb', self.W, v[:, 1:, :]) +\
+                          torch.einsum('hr, rTb->hTb', self.U, r[:, :-1, :]) + self.b_h[:, None, None])
+        r = torch.cat([r0[:, None, :], r], 1)
+        return r, torch.bernoulli(r)
+
+    def _parallel_sample_v_given_h(self, h: torch.Tensor) -> torch.Tensor:
+        '''
+        Sample the visible units given the hidden units in parallel over batches.
+
+        Parameters
+        ----------
+        h : torch.Tensor
+            The hidden units.
+            Shape: (n_hidden, T, n_batch)
+
+        Returns
+        -------
+        v : torch.Tensor
+            The visible units.
+            Shape: (n_visible, T, n_batch)
+        '''
+
+        v_prob = torch.sigmoid(torch.einsum('hv, hTb->vTb', self.W, h) + self.b_v[:, None, None])
+        return torch.bernoulli(v_prob)
+
+    def CD(self, v_data: torch.Tensor, r_data: torch.Tensor, CDk: int = 1) -> torch.Tensor:
+        '''
+        Perform Contrastive Divergence (CD) for a all time steps and batches in parallel.
+
+        Parameters
+        ----------
+        v_data : torch.Tensor
+            The visible units.
+            Shape: (n_visible, T, n_batch)
+        r_data: torch.Tensor
+            The expected hidden units.
+            Shape: (n_hidden, T, n_batch)
+        CDk : int
+            The number of steps of CD to perform.
+
+        Returns
+        -------
+        torch.mean(probht_k, 3) : torch.Tensor
+            The mean of the expected hidden units over all CD steps.
+            Shape: (n_hidden, T, n_batch)
+        torch.mean(vt_k, 3) : torch.Tensor
+            The mean of the visible units over all CD steps.
+            Shape: (n_visible, T, n_batch)
+        ht_k : torch.Tensor
+            Sampled hidden units of all CD steps.
+            Shape: (n_hidden, T, n_batch, CDk)
+        vt_k : torch.Tensor
+            Sampled visible units of all CD steps.
+            Shape: (n_visible, T, n_batch, CDk)
+        '''
+
+        batchsize = v_data.shape[2]
+        ht_k = torch.zeros(self.n_hidden, self.T, batchsize, CDk, dtype=torch.float, device=self.device)
+        probht_k = torch.zeros(self.n_hidden, self.T, batchsize, CDk, dtype=torch.float, device=self.device)
+        vt_k = torch.zeros(self.n_visible, self.T, batchsize, CDk, dtype=torch.float, device=self.device)
+        vt_k[..., 0] = v_data.detach().clone()
+        probht_k[..., 0], ht_k[..., 0] = self._parallel_sample_r_h_given_v(v_data, r_data)
+        for i in range(1, CDk):
+            vt_k[..., i] = self._parallel_sample_v_given_h(ht_k[..., i-1])
+            probht_k[..., i], ht_k[..., i] = self._parallel_sample_r_h_given_v(vt_k[..., i], r_data)
+        return torch.mean(probht_k, 3), torch.mean(vt_k, 3), ht_k, vt_k
 
     def learn(self, n_epochs=1000,
               lr=None,
@@ -53,19 +185,56 @@ class RTRBM(object):
               disable_tqdm=False,
               save_every_n_epochs=1, shuffle_batch=True,
               **kwargs):
+        '''
+        Train the RTRBM.
 
-        if self.dim == 2:
-            num_batches = 1
-            batch_size = 1
-        elif self.dim == 3:
+        Parameters
+        ----------
+        n_epochs : int
+            Number of epochs to train for.
+        lr : float
+            Learning rate.
+        lr_schedule : str
+            Learning rate schedule
+        batch_size : int
+            Number of batches to evaluate before updating gradients
+        CDk : int
+            The number of steps of CD to perform.
+        PCD : bool
+            Perform persistent contrastive divergence
+        sp : float
+            Sparse penalty; regularization penalty for the hidden to visible weights for not being sparse
+            ~ sp * abs(W_ij)^(x-1) * sign(W(ij))
+        x : int
+            Sparsity exponent to determine magnitude of the sparse penalty
+        mom : float
+            Momentum
+        wc : float
+            Weight cost
+        disable_tqdm: bool
+            disable load bar for training RTRBM
+        save_every_n_epochs: int
+            Save every n epochs the parameters of the RTRBM
+        shuffle_batch: bool
+            Shuffle the batches each epoch so that stochasticity is optimized during learning
+        kwargs: Model
+            Learning parameters corresponding to learning rate schedule (lr_schedule)
+
+        Returns
+        -------
+        None
+
+        '''
+
+        if self.num_samples <= batch_size:
+            batch_size, num_batches = self.num_samples, 1
+        else:
             num_batches = self.num_samples // batch_size
+
         if lr is None:
             lrs = np.array(get_lrs(mode=lr_schedule, n_epochs=n_epochs, **kwargs))
         else:
             lrs = lr * torch.ones(n_epochs)
-        lr_offset = np.array(get_lrs(mode='linear_decay', n_epochs=num_batches, max_lr=1, min_lr=1e-3))
-        self.Wv_mean, self.Wv_std = torch.zeros(self.n_hidden), torch.ones(self.n_hidden)
-        self.Ur_mean, self.Ur_std = torch.zeros(self.n_hidden), torch.ones(self.n_hidden)
 
         self.disable = disable_tqdm
         self.lrs = lrs
@@ -73,12 +242,7 @@ class RTRBM(object):
             err = 0
             for batch in range(0, num_batches):
                 self.dparams = self.initialize_grad_updates()
-
-                if self.dim == 2:
-                    v_data = self.V[..., None].to(self.device)
-                elif self.dim == 3:
-                    v_data = self.V[:, :, batch * batch_size : (batch+1) * batch_size].to(self.device)
-
+                v_data = self.V[:, :, batch * batch_size : (batch+1) * batch_size].to(self.device)
                 r_data = self._parallel_recurrent_sample_r_given_v(v_data)
 
                 if PCD and epoch != 0:
@@ -99,78 +263,87 @@ class RTRBM(object):
 
         self.r = r_data
 
-    def return_params(self):
-        return [self.W, self.U, self.b_v, self.b_init, self.b_h, self.errors]
-
-    def CD(self, v_data: torch.Tensor, r_data: torch.Tensor, CDk: int = 1, beta: float = 1.0) -> torch.Tensor:
-        batchsize = v_data.shape[2]
-        ht_k = torch.zeros(self.n_hidden, self.T, batchsize, CDk, dtype=self.dtype, device=self.device)
-        probht_k = torch.zeros(self.n_hidden, self.T, batchsize, CDk, dtype=self.dtype, device=self.device)
-        vt_k = torch.zeros(self.n_visible, self.T, batchsize, CDk, dtype=self.dtype, device=self.device)
-        vt_k[..., 0] = v_data.detach().clone()
-        probht_k[..., 0], ht_k[..., 0] = self._parallel_sample_r_h_given_v(v_data, r_data, beta=beta)
-        for i in range(1, CDk):
-            vt_k[..., i] = self._parallel_sample_v_given_h(ht_k[..., i-1], beta=beta)
-            probht_k[..., i], ht_k[..., i] = self._parallel_sample_r_h_given_v(vt_k[..., i], r_data, beta=beta)
-        return torch.mean(probht_k, 3), torch.mean(vt_k, 3), ht_k, vt_k
-
-    def _parallel_sample_r_h_given_v(self, v: torch.Tensor, r: torch.Tensor, beta: float = 1.0) -> torch.Tensor:
-
-        r0 = torch.sigmoid(torch.einsum('hv, vb->hb', self.W, v[:, 0, :]) + self.b_init[:, None])
-        r = torch.sigmoid(torch.einsum('hv, vTb->hTb', self.W, v[:, 1:, :]) +\
-                          torch.einsum('hr, rTb->hTb', self.U, r[:, :-1, :]) + self.b_h[:, None, None])
-        r = torch.cat([r0[:, None, :], r], 1)
-        return r, torch.bernoulli(r)
-
-    def _parallel_sample_v_given_h(self, h: torch.Tensor, beta: float = 1.0) -> torch.Tensor:
-        v_prob = torch.sigmoid(beta * (torch.einsum('hv, hTb->vTb', self.W, h) + self.b_v[:, None, None]))
-        return torch.bernoulli(v_prob)
-
-    def _parallel_recurrent_sample_r_given_v(self, v: torch.Tensor) -> torch.Tensor:
-        _, T, n_batch = v.shape
-        r = torch.zeros(self.n_hidden, T, n_batch, device=v.device)
-        r[:, 0, :] = torch.sigmoid(torch.einsum('hv, vb -> hb', self.W, v[:, 0, :]) + self.b_init[:, None])
-        for t in range(1, T):
-            r[:, t, :] = torch.sigmoid(torch.einsum('hv, vb -> hb', self.W, v[:, t, :]) +\
-                torch.einsum('hr, rb -> hb', self.U, r[:, t - 1, :]) + self.b_h[:, None])
-        return r
-
-    def visible_to_expected_hidden(self, vt, AF=torch.sigmoid):
-        T = vt.shape[1]
-        rt = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
-        rt[:, 0] = AF(torch.matmul(self.W, vt[:, 0]) + self.b_init)
-        for t in range(1, T):
-            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_h + torch.matmul(self.U, rt[:, t - 1]))
-        return rt
-
-    def visible_to_hidden(self, vt, r, AF=torch.sigmoid):
-        T = vt.shape[1]
-        ph_sample = torch.zeros(self.N_H, T, dtype=self.dtype, device=self.device)
-        ph_sample[:, 0] = AF(torch.matmul(self.W, vt[:, 0]) + self.b_init)
-        ph_sample[:, 1:T] = AF(torch.matmul(self.W, vt[:, 1:T]).T + torch.matmul(self.U, r[:, 0:T - 1]).T + self.b_h).T
-        return ph_sample, torch.bernoulli(ph_sample)
-
-    def hidden_to_visible(self, h, AF=torch.sigmoid):
-        return torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_v.T))
-
     def initialize_grad_updates(self):
-        return [torch.zeros_like(param, dtype=self.dtype, device=self.device) for param in self.params]
+        '''
+        Initializes the gradient updates for each parameter in the model.
 
-    def grad(self, vt: torch.Tensor, rt: torch.Tensor, ht_k: torch.Tensor, vt_k: torch.Tensor, barvt: torch.Tensor, barht: torch.Tensor) -> torch.Tensor:
-        Dt = torch.zeros(self.n_hidden, self.T + 1, vt.shape[2], dtype=self.dtype, device=self.device)
+        Parameters
+        ----------
+        self : Model
+            The model to initialize the gradient updates for.
+
+        Returns
+        -------
+        list
+        A list of zeros of the same shape as each parameter in the model.
+        '''
+        return [torch.zeros_like(param, dtype=torch.float, device=self.device) for param in self.params]
+
+    def grad(self, v_data: torch.Tensor, r_data: torch.Tensor, ht_k: torch.Tensor, vt_k: torch.Tensor, barvt: torch.Tensor, barht: torch.Tensor) -> torch.Tensor:
+        '''
+
+        Computes the gradient of the loss function with respect to the parameters of the model.
+
+        Parameters
+        ----------
+        v_data : torch.Tensor
+            The visible units.
+            Shape: (n_visible, T, n_batch)
+        r_data: torch.Tensor
+            The expected hidden units.
+            Shape: (n_hidden, T, n_batch)
+        ht_k : torch.Tensor
+            Sampled hidden units of all CD steps.
+            Shape: (n_hidden, T, n_batch, CDk)
+        vt_k : torch.Tensor
+            Sampled visible units of all CD steps.
+            Shape: (n_visible, T, n_batch, CDk)
+        barht : torch.Tensor
+            The mean of the expected hidden units over all CD steps.
+            Shape: (n_hidden, T, n_batch)
+        barvt : torch.Tensor
+            The mean of the visible units over all CD steps.
+            Shape: (n_visible, T, n_batch)
+
+        Returns
+        -------
+        list
+        A list of gradients of the model parameters
+        '''
+        Dt = torch.zeros(self.n_hidden, self.T + 1, v_data.shape[2], dtype=torch.float, device=self.device)
         for t in range(self.T - 1, -1, -1):
-            Dt[:, t, :] = torch.einsum('hv, hb->vb', self.U, (Dt[:, t + 1, :] * rt[:, t, :] * (1 - rt[:, t, :]) + (rt[:, t, :] - barht[:, t, :])))
+            Dt[:, t, :] = torch.einsum('hv, hb->vb', self.U, (Dt[:, t + 1, :] * r_data[:, t, :] * (1 - r_data[:, t, :]) + (r_data[:, t, :] - barht[:, t, :])))
 
-        db_init = torch.mean((rt[:, 0, :] - barht[:, 0, :]) + Dt[:, 1, :] * rt[:, 0, :] * (1 - rt[:, 0, :]), 1)
-        tmp = torch.sum(Dt[:, 2:self.T, :] * (rt[:, 1:self.T - 1, :] * (1 - rt[:, 1:self.T - 1, :])), 1)
-        db_H = torch.mean(torch.sum(rt[:, 1:self.T, :], 1) - torch.sum(barht[:, 1:self.T, :], 1) + tmp, 1)
-        db_V = torch.mean(torch.sum(vt - barvt, 1), 1)
-        dW = torch.mean(torch.einsum('rTb, vTb -> rvb', Dt[:, 1:self.T, :] * rt[:, 0:self.T - 1, :] * (1 - rt[:, 0:self.T - 1, :]), vt[:, 0:self.T - 1, :]), 2)
-        dW += torch.mean(torch.einsum('rTb, vTb -> rvb', rt, vt) - torch.mean(torch.einsum('rTbk, vTbk -> rvbk', ht_k, vt_k), 3), 2)
-        dU = torch.mean(torch.einsum('rTb, hTb -> rhb', Dt[:, 2:self.T + 1, :] * (rt[:, 1:self.T, :] * (1 - rt[:, 1:self.T, :])) + rt[:, 1:self.T, :] - barht[:, 1:self.T, :], rt[:, 0:self.T - 1, :]), 2)
+        db_init = torch.mean((r_data[:, 0, :] - barht[:, 0, :]) + Dt[:, 1, :] * r_data[:, 0, :] * (1 - r_data[:, 0, :]), 1)
+        tmp = torch.sum(Dt[:, 2:self.T, :] * (r_data[:, 1:self.T - 1, :] * (1 - r_data[:, 1:self.T - 1, :])), 1)
+        db_H = torch.mean(torch.sum(r_data[:, 1:self.T, :], 1) - torch.sum(barht[:, 1:self.T, :], 1) + tmp, 1)
+        db_V = torch.mean(torch.sum(v_data - barvt, 1), 1)
+        dW = torch.mean(torch.einsum('rTb, vTb -> rvb', Dt[:, 1:self.T, :] * r_data[:, 0:self.T - 1, :] * (1 - r_data[:, 0:self.T - 1, :]), v_data[:, 0:self.T - 1, :]), 2)
+        dW += torch.mean(torch.einsum('rTb, vTb -> rvb', r_data, v_data) - torch.mean(torch.einsum('rTbk, vTbk -> rvbk', ht_k, vt_k), 3), 2)
+        dU = torch.mean(torch.einsum('rTb, hTb -> rhb', Dt[:, 2:self.T + 1, :] * (r_data[:, 1:self.T, :] * (1 - r_data[:, 1:self.T, :])) + r_data[:, 1:self.T, :] - barht[:, 1:self.T, :], r_data[:, 0:self.T - 1, :]), 2)
         return [dW, dU, db_H, db_V, db_init]
 
-    def update_grad(self, lr=1e-3, mom=0, wc=0, x=2, sp=None):
+    def update_grad(self, lr=1e-3, mom=0, wc=0, sp=None, x=2):
+        '''
+        Updates the parameters of the RTRBM using the gradients computed in grad.
+
+        Parameters
+        ----------
+        lr : float
+            Learning rate
+        mom : float
+            Momentum
+        wc : float
+            Weight cost
+        sp : float
+            Sparse penalty; regularization penalty for the hidden to visible weights for not being sparse
+        x : float
+            Sparsity exponent to determine magnitude of the sparse penalty
+
+        Returns
+        -------
+        None
+        '''
         dW, dU, db_h, db_v, db_init = self.dparams
         DW, DU, Db_h, Db_v, Db_init = self.Dparams
         DW = mom * DW + lr * (dW - wc * self.W)
@@ -180,11 +353,25 @@ class RTRBM(object):
         Db_init = mom * Db_init + lr * db_init
         if sp is not None:
             DW -= sp * torch.reshape(torch.sum(torch.abs(self.W), 1).repeat(self.n_visible), [self.n_hidden, self.n_visible]) ** (x - 1) * torch.sign(self.W)
-        if self.no_bias:
-            Db_h, Db_v, Db_init = 0, 0, 0
         self.Dparams = [DW, DU, Db_h, Db_v, Db_init]
         for i in range(len(self.params)): self.params[i] += self.Dparams[i]
         return
+
+    def return_params(self):
+        '''
+        This function returns the parameters of the RTRBM.
+
+        Parameters
+        ----------
+        self : Model
+            The RTRBM object.
+
+        Returns
+        -------
+        list
+        A list of the parameters of the RTRBM.
+        '''
+        return [self.W, self.U, self.b_v, self.b_init, self.b_h, self.errors]
 
     def infer(self,
               data,
@@ -199,8 +386,8 @@ class RTRBM(object):
         n_hidden = self.n_hidden
         n_visible, t1 = data.shape
 
-        vt = torch.zeros(n_visible, T + t_extra, dtype=self.dtype, device=self.device)
-        rt = torch.zeros(n_hidden, T + t_extra, dtype=self.dtype, device=self.device)
+        vt = torch.zeros(n_visible, T + t_extra, dtype=torch.float, device=self.device)
+        rt = torch.zeros(n_hidden, T + t_extra, dtype=torch.float, device=self.device)
         vt[:, 0:t1] = data.float().to(self.device)
 
         rt[:, 0] = AF(torch.matmul(self.W, vt[:, 0]) + self.b_init)
@@ -214,8 +401,8 @@ class RTRBM(object):
                 h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_h + torch.matmul(self.U, rt[:, t - 1]))).T
                 v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_v.T))
 
-            vt_k = torch.zeros(n_visible, gibbs_k, dtype=self.dtype, device=self.device)
-            ht_k = torch.zeros(n_hidden, gibbs_k, dtype=self.dtype, device=self.device)
+            vt_k = torch.zeros(n_visible, gibbs_k, dtype=torch.float, device=self.device)
+            ht_k = torch.zeros(n_hidden, gibbs_k, dtype=torch.float, device=self.device)
             for kk in range(gibbs_k):
                 h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_h + torch.matmul(self.U, rt[:, t - 1]))).T
                 v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_v.T))
@@ -236,25 +423,30 @@ class RTRBM(object):
 
         return vt, rt
 
-    def sample(self, v_start, AF=torch.sigmoid, chain=50, pre_gibbs_k=100, gibbs_k=20, mode=1, disable_tqdm=False):
+    def sample(self, v_start, chain=50, pre_gibbs_k=100, gibbs_k=20, mode=1, disable_tqdm=False):
         n_hidden, n_visible = self.W.shape
-        vt = torch.zeros(n_visible, chain + 1, dtype=self.dtype, device=self.device)
-        rt = torch.zeros(n_hidden, chain + 1, dtype=self.dtype, device=self.device)
-        rt[:, 0] = AF(torch.matmul(self.W, v_start.T) + self.b_init)
-        vt[:, 0] = v_start
-        for t in tqdm(range(1, chain + 1), disable=disable_tqdm):
-            v = vt[:, t - 1]
-            for kk in range(pre_gibbs_k):
-                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_h + torch.matmul(self.U, rt[:, t - 1]))).T
-                v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_v.T))
+        if v_start.ndim == 1: v_start = v_start[:, None]
+        n_batches = v_start.shape[1]
+        vt = torch.zeros(n_visible, chain + 1, n_batches, dtype=torch.float, device=self.device)
+        rt = torch.zeros(n_hidden, chain + 1, n_batches, dtype=torch.float, device=self.device)
 
-            vt_k = torch.zeros(n_visible, gibbs_k, dtype=self.dtype, device=self.device)
-            ht_k = torch.zeros(n_hidden, gibbs_k, dtype=self.dtype, device=self.device)
+        rt[:, 0, :] = torch.sigmoid(torch.einsum('hv, vb->hb', self.W, v_start) + self.b_init[:, None])
+        vt[:, 0, :] = v_start
+        for t in tqdm(range(1, chain + 1), disable=disable_tqdm):
+            v = vt[:, t-1, :]
+            for kk in range(pre_gibbs_k):
+                h = torch.bernoulli(torch.sigmoid(torch.einsum('hv, vb->hb', self.W, v) + \
+                                    torch.einsum('hr, rb->hb', self.U, rt[:, t - 1, :]) + self.b_h[:, None]))
+                v = torch.bernoulli(torch.sigmoid(torch.einsum('hv, hb->vb', self.W, h) + self.b_v[:, None]))
+
+            vt_k = torch.zeros(n_visible, gibbs_k, n_batches, dtype=torch.float, device=self.device)
+            ht_k = torch.zeros(n_hidden, gibbs_k, n_batches, dtype=torch.float, device=self.device)
             for kk in range(gibbs_k):
-                h = torch.bernoulli(AF(torch.matmul(self.W, v).T + self.b_h + torch.matmul(self.U, rt[:, t - 1]))).T
-                v = torch.bernoulli(AF(torch.matmul(self.W.T, h) + self.b_v.T))
-                vt_k[:, kk] = v.T
-                ht_k[:, kk] = h.T
+                h = torch.bernoulli(torch.sigmoid(torch.einsum('hv, vb->hb', self.W, v) + \
+                                    torch.einsum('hr, rb->hb', self.U, rt[:, t - 1, :]) + self.b_h[:, None]))
+                v = torch.bernoulli(torch.sigmoid(torch.einsum('hv, hb->vb', self.W, h) + self.b_v[:, None]))
+                vt_k[:, kk, :] = v
+                ht_k[:, kk, :] = h
 
             if mode == 1:
                 vt[:, t] = vt_k[:, -1]
@@ -266,9 +458,11 @@ class RTRBM(object):
                 idx = torch.argmax(E)
                 vt[:, t] = vt_k[:, idx]
 
-            rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_h + torch.matmul(self.U, rt[:, t - 1]))
+            rt[:, t, :] = torch.sigmoid(torch.einsum('hv, vb->hb', self.W, v) + \
+                                    torch.einsum('hr, rb->hb', self.U, rt[:, t - 1, :]) + self.b_h[:, None])
 
-        return vt[:, 1:], rt[:, 1:]
+        return vt[:, 1:, :], rt[:, 1:, :]
+
 if __name__ == '__main__':
     import os
 
@@ -280,30 +474,29 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from tqdm import tqdm
 
-    data = create_BB(N_V=16, T=320, n_samples=10, width_vec=[4, 5, 6], velocity_vec=[1, 2])
-    # n_hidden = 3
-    # temporal_connections = torch.tensor([
-    #     [0, -1, 1],
-    #     [1, 0, -1],
-    #     [-1, 1, 0]
-    # ]).float()
-    # gaus = PoissonTimeShiftedData(
-    #     neurons_per_population=20,
-    #     n_populations=n_hidden, n_batches=10,
-    #     time_steps_per_batch=100,
-    #     fr_mode='gaussian', delay=1, temporal_connections=temporal_connections, norm=0.36, spread_fr=[0.5, 1.5])
-    #
-    # gaus.plot_stats(T=100)
-    # plt.show()
-    # data = reshape(gaus.data)
-    # data = reshape(data, T=100, n_batches=100)
-    # train, test = data[..., :80], data[..., 80:]
-    train, test = data[..., :8], data[..., 8:]
+    # data = create_BB(N_V=16, T=50, n_samples=100, width_vec=[4, 5, 6], velocity_vec=[1, 2])
+    n_hidden = 3
+    temporal_connections = torch.tensor([
+        [0, -1, 1],
+        [1, 0, -1],
+        [-1, 1, 0]
+    ]).float()
+    gaus = PoissonTimeShiftedData(
+        neurons_per_population=20,
+        n_populations=n_hidden, n_batches=35,
+        time_steps_per_batch=1000,
+        fr_mode='gaussian', delay=1, temporal_connections=temporal_connections, norm=0.36, spread_fr=[0.5, 1.5])
+
+    gaus.plot_stats(T=100)
+    plt.show()
+    data = reshape(gaus.data)
+    data = reshape(data, T=100, n_batches=350)
+    train, test = data[..., :280], data[..., 280:]
     rtrbm = RTRBM(train, n_hidden=8, device="cuda")
-    rtrbm.learn(batch_size=5, n_epochs=10, lr=1e-3, CDk=10, mom=0.6, wc=0.0002, sp=0, x=0)
+    rtrbm.learn(batch_size=10, n_epochs=500, lr=1e-3, CDk=10, mom=0.9, wc=0.0002, sp=0, x=0)
     torch.save(rtrbm, r'C:\Users\sebas\RU\intern\legacy\rtrbm')
     from utils.moments_plot import *
-    _, _, vh = infer_and_get_moments_plot(dir=r'C:\Users\sebas\RU\intern\legacy\rtrbm', test=test, n_batches=2,
+    _, _, vh = infer_and_get_moments_plot(dir=r'C:\Users\sebas\RU\intern\legacy\rtrbm', test=test, machine='rtrbm_parallel',
                                           pre_gibbs_k=100, gibbs_k=100, mode=1, n=1000, m=50000)
     plt.show()
 
