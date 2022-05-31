@@ -41,6 +41,11 @@ def infer_and_get_moments_plot(dir,
     vs = torch.empty(n_v, T, n_batches)
     hs = torch.empty(n_h, T, n_batches)
 
+    if machine =='rtrbm_parallel':
+        rt = rtrbm._parallel_recurrent_sample_r_given_v(test)
+        h, _ = rtrbm._parallel_sample_r_h_given_v(test, rt)
+        ht = h.clone().detach()
+
     if machine == 'rtrbm_autograd':
         rt = rtrbm._sample_r_given_v_over_time(test)
         h, _ = rtrbm._parallel_sample_r_h_given_v(test, rt)
@@ -54,15 +59,24 @@ def infer_and_get_moments_plot(dir,
         elif machine == 'rbm':
             x, _ = rtrbm.visible_to_hidden(test[:, :, i])
             ht[:, :, i] = x.clone().detach()
+        elif machine == 'rtrbm_parallel':
+            pass
         elif machine == 'rtrbm_autograd':
             pass
         else:
             raise ValueError('Machine must be "rbm", "rtrbm" or "rtrbm_autograd"')
 
-        v, h = rtrbm.sample(test[:, 0, i], chain=test.shape[1], pre_gibbs_k=pre_gibbs_k,
+        if machine == 'rtrbm' or machine == 'rbm':
+            v, h = rtrbm.sample(test[:, 0, i], chain=test.shape[1], pre_gibbs_k=pre_gibbs_k,
+                                gibbs_k=gibbs_k, mode=mode, disable_tqdm=True)
+            vs[:, :, i] = v.clone().detach().cpu()
+            hs[:, :, i] = h.clone().detach().cpu()
+
+    if machine == 'rtrbm_autograd' or machine == 'rtrbm_parallel':
+        v, h = rtrbm.sample(test[:, 0, :], chain=test.shape[1], pre_gibbs_k=pre_gibbs_k,
                             gibbs_k=gibbs_k, mode=mode, disable_tqdm=True)
-        vs[:, :, i] = v.clone().detach().cpu()
-        hs[:, :, i] = h.clone().detach().cpu()
+        vs = v.clone().detach().cpu()
+        hs = h.clone().detach().cpu()
 
     vt = reshape_from_batches(vt)
     ht = reshape_from_batches(ht)
