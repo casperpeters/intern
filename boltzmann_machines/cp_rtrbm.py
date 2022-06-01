@@ -239,3 +239,131 @@ class RTRBM(object):
             rt[:, t] = AF(torch.matmul(self.W, vt[:, t]) + self.b_H + torch.matmul(self.U, rt[:, t - 1]))
 
         return vt[:, 1:], rt[:, 1:]
+
+    def gen_data(self, v_test, gibbs_k=20, disable_tqdm=False):
+        if v_test.ndim==2:
+            v_test=v_test[..., None]
+        n_v, T, n_batches = v_test.shape
+        vt = v_test.detach().clone()
+        rt = torch.zeros(self.N_H, T, n_batches, dtype=self.dtype, device=self.device)
+        for t in tqdm(range(T), disable=disable_tqdm):
+            if t == 0:
+                rt[:, 0, :] = torch.sigmoid(torch.einsum('hv, vb->hb', self.W, v_test[:, 0, :]) + self.b_init.T)
+                h = torch.bernoulli(rt[:, 0, :])
+                for kk in range(gibbs_k-1):
+                    vt[:, 0, :] = torch.bernoulli(torch.sigmoid(torch.einsum('hv, hb->vb', self.W, h) + self.b_V.T))
+                    h = torch.bernoulli(torch.sigmoid(torch.einsum('hv, vb->hb', self.W, vt[:, 0, :]) + self.b_init.T))
+            elif t > 0:
+                rt[:, t, :] = torch.sigmoid(torch.einsum('hv, vb->hb', self.W, v_test[:, t, :]) + self.b_H.T +
+                                            torch.einsum('hr, rb->hb', self.U, rt[:, t - 1, :]))
+                h = torch.bernoulli(rt[:, 0, :])
+                for kk in range(gibbs_k-1):
+                    vt[:, t, :] = torch.bernoulli(torch.sigmoid(torch.einsum('hv, hb->vb', self.W, h) + self.b_V.T))
+                    h = torch.bernoulli(torch.sigmoid(torch.einsum('hv, vb->hb', self.W, vt[:, t, :]) + self.b_H.T +
+                                                      torch.einsum('hr, rb->hb', self.U, rt[:, t - 1, :])))
+        return vt, rt
+
+if __name__ == '__main__':
+    import os
+
+    # os.chdir(r'D:\OneDrive\RU\Intern\rtrbm_master')
+    from data.mock_data import create_BB
+    from data.poisson_data_v import PoissonTimeShiftedData
+    from data.reshape_data import reshape
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    from tqdm import tqdm
+
+    #data = create_BB(N_V=16, T=100, n_samples=20, width_vec=[4, 5, 6], velocity_vec=[1, 2])
+
+    n_hidden = 3
+    temporal_connections = torch.tensor([
+        [0, -1, 1],
+        [1, 0, -1],
+        [-1, 1, 0]
+    ]).float()
+    gaus = PoissonTimeShiftedData(
+        neurons_per_population=20,
+        n_populations=n_hidden, n_batches=20,
+        time_steps_per_batch=1000,
+        fr_mode='gaussian', delay=1, temporal_connections=temporal_connections, norm=0.36, spread_fr=[0.5, 1.5])
+
+    gaus.plot_stats(T=100)
+    plt.show()
+    data = reshape(gaus.data)
+    data = reshape(data, T=100, n_batches=20)
+    train, test = data[..., :20], data[..., 20:]
+
+    rtrbm = RTRBM(train, N_H=8, device="cpu")
+    rtrbm.learn(batch_size=10, n_epochs=500, lr=1e-3, CDk=10, mom=0.9, wc=0.0002, sp=0, x=0)
+    plt.plot(rtrbm.errors)
+    plt.show()
+
+    """
+    #data = create_BB(n_visible=16, T=320, n_samples=10, width_vec=[4, 5, 6], velocity_vec=[1, 2])
+    n_hidden = 3
+    temporal_connections = torch.tensor([
+        [0, -1, 1],
+        [1, 0, -1],
+        [-1, 1, 0]
+    ]).float()
+    gaus = PoissonTimeShiftedData(
+        neurons_per_population=20,
+        n_populations=n_hidden, n_batches=25,
+        time_steps_per_batch=1000,
+        fr_mode='gaussian', delay=1, temporal_connections=temporal_connections, norm=0.36, spread_fr=[0.5, 1.5])
+
+    gaus.plot_stats(T=100)
+    plt.show()
+    data = reshape(gaus.data)
+    data = reshape(data, T=100, n_batches=25)
+    train, test = data[..., :200], data[..., 200:]
+    rtrbm = RTRBM(train, N_H=3, device="cpu")
+    rtrbm.learn(batch_size=5, n_epochs=1000, lr=1e-3, lr_mode=None, CDk=10, mom=0, wc=0, sp=0, x=0)
+"""
+ # Infer from trained RTRBM and plot some results
+    vt_infer, rt_infer = rtrbm.infer(torch.tensor(data[:, :50, 0]), t_extra=50)
+
+    # effective coupling
+    W = rtrbm.W.detach().clone().numpy()
+    U = rtrbm.U.detach().clone().numpy()
+    rt = rtrbm.r.detach().clone().numpy()
+    data = data.detach().numpy()
+    var_h_matrix = np.reshape(np.var(rt[..., 0], 1).repeat(W.shape[1]), [W.shape[1], W.shape[0]]).T
+    var_v_matrix = np.reshape(np.var(data[..., 0], 1).repeat(W.shape[0]), [W.shape[0], W.shape[1]])
+
+    Je_Wv = np.matmul(W.T, W * var_h_matrix) / W.shape[1] ** 2
+    Je_Wh = np.matmul(W * var_v_matrix, W.T) / W.shape[0] ** 2
+
+    _, ax = plt.subplots(2, 3, figsize=(12, 12))
+    sns.heatmap(vt_infer.detach().numpy(), ax=ax[0, 0], cbar=False)
+    ax[0, 0].set_title('Infered data')
+    ax[0, 0].set_xlabel('Time')
+    ax[0, 0].set_ylabel('Neuron index')
+
+    ax[0, 1].plot(rtrbm.errors)
+    ax[0, 1].set_title('RMSE of the RTRBM over epoch')
+    ax[0, 1].set_xlabel('Epoch')
+    ax[0, 1].set_ylabel('RMSE')
+
+    sns.heatmap(Je_Wv, ax=ax[0, 2])
+    ax[0, 2].set_title('Effective coupling V')
+    ax[0, 2].set_xlabel("Visibel nodes")
+    ax[0, 2].set_ylabel("Visibel nodes")
+
+    sns.heatmap(rtrbm.W.detach().numpy(), ax=ax[1, 0])
+    ax[1, 0].set_title('Visible to hidden connection')
+    ax[1, 0].set_xlabel('Visible')
+    ax[1, 0].set_ylabel('Hiddens')
+
+    sns.heatmap(rtrbm.U.detach().numpy(), ax=ax[1, 1])
+    ax[1, 1].set_title('Hidden to hidden connection')
+    ax[1, 1].set_xlabel('Hidden(t-1)')
+    ax[1, 1].set_ylabel('Hiddens(t)')
+
+    sns.heatmap(Je_Wh, ax=ax[1, 2])
+    ax[1, 2].set_title('Effective coupling H')
+    ax[1, 2].set_xlabel("Hidden nodes [t]")
+    ax[1, 2].set_ylabel("Hidden nodes [t]")
+    plt.tight_layout()
+    plt.show()

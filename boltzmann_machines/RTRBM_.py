@@ -195,7 +195,7 @@ class RTRBM(object):
         lr : float
             Learning rate.
         lr_schedule : str
-            Learning rate schedule
+            Learning rate schedule; 'cyclic', 'geometric_decay', 'linear_decay', 'cosine_annealing_warm_restarts', 'cyclic_annealing'
         batch_size : int
             Number of batches to evaluate before updating gradients
         CDk : int
@@ -261,8 +261,6 @@ class RTRBM(object):
             if shuffle_batch:
                 self.V[..., :] = self.V[..., torch.randperm(self.num_samples)]
 
-        self.r = r_data
-
     def initialize_grad_updates(self):
         '''
         Initializes the gradient updates for each parameter in the model.
@@ -312,7 +310,8 @@ class RTRBM(object):
         '''
         Dt = torch.zeros(self.n_hidden, self.T + 1, v_data.shape[2], dtype=torch.float, device=self.device)
         for t in range(self.T - 1, -1, -1):
-            Dt[:, t, :] = torch.einsum('hv, hb->vb', self.U, (Dt[:, t + 1, :] * r_data[:, t, :] * (1 - r_data[:, t, :]) + (r_data[:, t, :] - barht[:, t, :])))
+            Dt[:, t, :] = torch.einsum('hv, hb->vb', self.U, (Dt[:, t + 1, :] * r_data[:, t, :] * (1 - r_data[:, t, :]) +\
+                                                              (r_data[:, t, :] - barht[:, t, :])))
 
         db_init = torch.mean((r_data[:, 0, :] - barht[:, 0, :]) + Dt[:, 1, :] * r_data[:, 0, :] * (1 - r_data[:, 0, :]), 1)
         tmp = torch.sum(Dt[:, 2:self.T, :] * (r_data[:, 1:self.T - 1, :] * (1 - r_data[:, 1:self.T - 1, :])), 1)
@@ -474,7 +473,7 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
     from tqdm import tqdm
 
-    # data = create_BB(N_V=16, T=50, n_samples=100, width_vec=[4, 5, 6], velocity_vec=[1, 2])
+    # data = create_BB(N_V=16, T=100, n_samples=20, width_vec=[4, 5, 6], velocity_vec=[1, 2])
     n_hidden = 3
     temporal_connections = torch.tensor([
         [0, -1, 1],
@@ -483,25 +482,27 @@ if __name__ == '__main__':
     ]).float()
     gaus = PoissonTimeShiftedData(
         neurons_per_population=20,
-        n_populations=n_hidden, n_batches=35,
+        n_populations=n_hidden, n_batches=30,
         time_steps_per_batch=1000,
         fr_mode='gaussian', delay=1, temporal_connections=temporal_connections, norm=0.36, spread_fr=[0.5, 1.5])
 
     gaus.plot_stats(T=100)
     plt.show()
     data = reshape(gaus.data)
-    data = reshape(data, T=100, n_batches=350)
-    train, test = data[..., :280], data[..., 280:]
-    rtrbm = RTRBM(train, n_hidden=8, device="cuda")
+    data = reshape(data, T=100, n_batches=30)
+    train, test = data[..., :20], data[..., 20:]
+    rtrbm = RTRBM(train, n_hidden=3, device="cpu")
     rtrbm.learn(batch_size=10, n_epochs=500, lr=1e-3, CDk=10, mom=0.9, wc=0.0002, sp=0, x=0)
+    plt.plot(rtrbm.errors)
+    plt.show()
     torch.save(rtrbm, r'C:\Users\sebas\RU\intern\legacy\rtrbm')
     from utils.moments_plot import *
-    _, _, vh = infer_and_get_moments_plot(dir=r'C:\Users\sebas\RU\intern\legacy\rtrbm', test=test, machine='rtrbm_parallel',
+    _, _, [vt, vs, ht, hs] = infer_and_get_moments_plot(dir=r'C:\Users\sebas\RU\intern\legacy\rtrbm', test=test, machine='rtrbm_parallel',
                                           pre_gibbs_k=100, gibbs_k=100, mode=1, n=1000, m=50000)
     plt.show()
 
-    '''
-    vt_infer, rt_infer = rtrbm.infer(data[:, :280, 0], gibbs_k=1)
+
+    #vt_infer, rt_infer = rtrbm.infer(data[:, :280, 0], gibbs_k=1)
     #
     # k=1
     # vvt, vvs = [], []
@@ -563,4 +564,4 @@ if __name__ == '__main__':
     ax[1, 2].set_xlabel("Hidden nodes [t]")
     ax[1, 2].set_ylabel("Hidden nodes [t]")
     plt.tight_layout()
-    plt.show()'''
+    plt.show()
