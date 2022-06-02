@@ -10,6 +10,11 @@ import matplotlib.pyplot as plt
 from data.load_data import load_data
 
 
+def shifted_pairwise(vt, vs):
+    vvt = np.array(torch.matmul(vt[:, :-1], vt[:, 1:].T) / (vt.shape[1] - 1)).flatten()
+    vvs = np.array(torch.matmul(vs[:, :-1], vs[:, 1:].T) / (vs.shape[1] - 1)).flatten()
+    return vvt, vvs
+
 def correlations(results, k):
     vt, vs, ht, hs = results
     vvt, vvs, vht, vhs, hht, hhs = calculate_moments(vt, ht, vs, hs, k=k)

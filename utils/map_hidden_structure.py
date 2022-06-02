@@ -40,9 +40,44 @@ class MapZebra(object):
 
         # initialize plot
         self.fig, self.axes = plt.subplots(1, 3, figsize=(15, 4))
-        self.axes[0].plot(coordinates[:, 0], coordinates[:, 1], '.', ms=1)
-        self.axes[1].plot(coordinates[:, 1], coordinates[:, 2], '.', ms=1)
-        self.axes[2].plot(coordinates[:, 0], coordinates[:, 2], '.', ms=1)
+
+    def update(self, hidden_unit):
+        for ax in self.axes:
+            ax.cla()
+        hidden_unit = int(hidden_unit - 1)
+        if hidden_unit == -1:
+            self.axes[0].plot(self.coordinates[:, 0], self.coordinates[:, 1], '.', ms=1)
+            self.axes[1].plot(self.coordinates[:, 1], self.coordinates[:, 2], '.', ms=1)
+            self.axes[2].plot(self.coordinates[:, 0], self.coordinates[:, 2], '.', ms=1)
+        else:
+            visible_idx = self.strongest_connections == hidden_unit
+            if self.threshold is not None:
+                visible_idx *= np.abs(self.weights[hidden_unit, :]) > self.threshold
+                visible_idx = visible_idx.type(torch.bool)
+            self.axes[0].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 1], '.', ms=1)
+            self.axes[1].plot(self.coordinates[visible_idx, 1], self.coordinates[visible_idx, 2], '.', ms=1)
+            self.axes[2].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 2], '.', ms=1)
+        self.set_limits_labels()
+        self.fig.canvas.draw_idle()
+
+    def set_limits_labels(self):
+        self.axes[0].set_xlim([self.x_min, self.x_max])
+        self.axes[0].set_ylim([self.y_min, self.y_max])
+        self.axes[1].set_xlim([self.y_min, self.y_max])
+        self.axes[1].set_ylim([self.z_min, self.z_max])
+        self.axes[2].set_xlim([self.x_min, self.x_max])
+        self.axes[2].set_ylim([self.z_min, self.z_max])
+        self.axes[0].set_xlabel('x')
+        self.axes[0].set_ylabel('y')
+        self.axes[1].set_xlabel('y')
+        self.axes[1].set_ylabel('z')
+        self.axes[2].set_xlabel('x')
+        self.axes[2].set_ylabel('z')
+
+    def plot_all(self):
+        self.axes[0].plot(self.coordinates[:, 0], self.coordinates[:, 1], '.', ms=1)
+        self.axes[1].plot(self.coordinates[:, 1], self.coordinates[:, 2], '.', ms=1)
+        self.axes[2].plot(self.coordinates[:, 0], self.coordinates[:, 2], '.', ms=1)
         self.set_limits_labels()
 
         # adjust the main plot to make room for the sliders
@@ -61,43 +96,22 @@ class MapZebra(object):
         )
 
         self.slider.on_changed(self.update)
-
-    def update(self, hidden_unit):
-        for ax in self.axes:
-            ax.cla()
-        hidden_unit = int(hidden_unit - 1)
-        if hidden_unit == -1:
-            self.axes[0].plot(self.coordinates[:, 0], self.coordinates[:, 1], '.', ms=1)
-            self.axes[1].plot(self.coordinates[:, 1], self.coordinates[:, 2], '.', ms=1)
-            self.axes[2].plot(self.coordinates[:, 0], self.coordinates[:, 2], '.', ms=1)
-        else:
-            visible_idx = self.strongest_connections == hidden_unit
-            if self.threshold is not None:
-                visible_idx *= np.abs(self.weights[hidden_unit, :]) > self.threshold
-                visible_idx = visible_idx.type(torch.bool)
-            self.axes[0].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 1], '.', ms=1)
-            self.axes[1].plot(self.coordinates[visible_idx, 1], self.coordinates[visible_idx, 2], '.', ms=1)
-            self.axes[2].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 2], '.', ms=1)
-        self.visible_idx = visible_idx
-        self.set_limits_labels()
-        self.fig.canvas.draw_idle()
-
-    def set_limits_labels(self):
-        self.axes[0].set_xlim([self.x_min, self.x_max])
-        self.axes[0].set_ylim([self.y_min, self.y_max])
-        self.axes[1].set_xlim([self.y_min, self.y_max])
-        self.axes[1].set_ylim([self.z_min, self.z_max])
-        self.axes[2].set_xlim([self.x_min, self.x_max])
-        self.axes[2].set_ylim([self.z_min, self.z_max])
-        self.axes[0].set_xlabel('x')
-        self.axes[0].set_ylabel('y')
-        self.axes[1].set_xlabel('y')
-        self.axes[1].set_ylabel('z')
-        self.axes[2].set_xlabel('x')
-        self.axes[2].set_ylabel('z')
-
-    def plot(self):
         return self.fig.show()
+
+    def plot_one(self, hidden_unit):
+        visible_idx = self.strongest_connections == hidden_unit
+        if self.threshold is not None:
+            visible_idx *= np.abs(self.weights[hidden_unit, :]) > self.threshold
+            visible_idx = visible_idx.type(torch.bool)
+        self.axes[0].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 1], '.', ms=1)
+        self.axes[1].plot(self.coordinates[visible_idx, 1], self.coordinates[visible_idx, 2], '.', ms=1)
+        self.axes[2].plot(self.coordinates[visible_idx, 0], self.coordinates[visible_idx, 2], '.', ms=1)
+        self.set_limits_labels()
+        return self.fig.show()
+
+    def new_plot(self):
+        self.fig, self.axes = plt.subplots(1, 3, figsize=(15, 4))
+        return
 
 
 class MapHiddenStructure(object):
@@ -200,9 +214,12 @@ class MapHiddenStructure(object):
 
 if __name__ == '__main__':
     from data.load_data import get_split_data
-    _, _, C = get_split_data(N_V=35000, which='thijs', data_path='../cRBM Jerome+Thijs/crbm_zebrafish_spontaneous_data/neural_recordings/full_calcium_data_sets/20180706_Run04_spontaneous_rbm0.h5')
-    dir = '../results/full brain/rtrbm_200epo_3e-2sp_thijs.pt'
+    dir = '/home/casperpeters/Documents/codes/intern/results/full_brain/rbm_20000epo_1e-2sp_1x_thijs.pt'
+    # _, _, coordinates = get_split_data(N_V=50000)
     rtrbm = torch.load(dir)
+    print(rtrbm.N_H)
     W = rtrbm.W.detach().cpu()
-    x = MapZebra(W, C, threshold=.1)
-    x.plot()
+    x = MapZebra(W, rtrbm.coordinates, threshold=.04)
+    for h in np.arange(20):
+        x.plot_one(h)
+        x.new_plot()
