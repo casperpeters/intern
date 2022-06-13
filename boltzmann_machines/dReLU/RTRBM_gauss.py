@@ -13,7 +13,7 @@ from tqdm import tqdm
 from optim.lr_scheduler import get_lrs
 
 
-class RTRBM(object):
+class RTRBM_G(object):
     def __init__(self, data: torch.Tensor, n_hidden: int = 10, device: str = 'cpu', debug_mode: bool = False):
         if not torch.cuda.is_available():
             print('cuda not available, using cpu')
@@ -106,11 +106,11 @@ class RTRBM(object):
               sp=None, x=2,
               mom=0.9, wc=0.0002,
               disable_tqdm=False,
-              save_every_n_epochs=1, shuffle_batch=True, layer_norm=True,
+              save_every_n_epochs=1, shuffle_batch=True, layer_norm=True, n=1,
               **kwargs):
 
         self.layer_norm = layer_norm
-
+        self.n = n
         if self.num_samples <= batch_size:
             batch_size, num_batches = self.num_samples, 1
         else:
@@ -146,19 +146,13 @@ class RTRBM(object):
             if shuffle_batch:
                 self.V[..., :] = self.V[..., torch.randperm(self.num_samples)]
 
-    def lnorm(self, x: torch.Tensor, all_batches: bool = False, eps: float = 1e-6) -> torch.Tensor:
+    def lnorm(self, x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
         if not self.layer_norm:
             return
         if x.ndim == 2 :# x.shape = n_h, T=0, n_batches
-            if all_batches:
-                return (x - torch.mean(x)) / (torch.std(x) + eps)
-            elif not all_batches:
-                return (x - torch.mean(x, 0)[None, :]) / (torch.std(x, 0)[None, :] + eps)
+            return (x - torch.mean(x, 0)[None, :]) / (torch.std(x, 0)[None, :] + eps)
         elif x.ndim == 3:# x.shape = n_h, T-1, n_batches
-            if all_batches:
-                return ((x - torch.mean(x, (0, 2))[None, :, None]) / (torch.std(x, (0, 2))[None, :, None] + eps))
-            elif not all_batches:
-                return ((x - torch.mean(x, 0)[None, :, :]) / (torch.std(x, 0)[None, :, :] + eps))
+            return ((x - torch.mean(x, 0)[None, :, :]) / (torch.std(x, 0)[None, :, :] + eps))
 
     def initialize_grad_updates(self):
         return [torch.zeros_like(param, dtype=torch.float, device=self.device) for param in self.params]
@@ -166,20 +160,26 @@ class RTRBM(object):
     def grad(self, v_data: torch.Tensor, r_data: torch.Tensor, ht_k: torch.Tensor, vt_k: torch.Tensor,
              barvt: torch.Tensor, barht: torch.Tensor) -> torch.Tensor:
         T = self.T
+
+        I0_data = self.lnorm(torch.einsum('hv, vb -> hb', self.W, v_data[:, 0, :]))
+        I0_model = self.lnorm(torch.einsum('hv, vb -> hb', self.W, barvt[:, 0, :]))
+        I_data = self.lnorm(torch.einsum('hv, vTb -> hTb', self.W, v_data[:, 1:, :]) + \
+                            torch.einsum('hr, rTb->hTb', self.U, r_data[:, :-1, :]))
+        I_model = self.lnorm(torch.einsum('hv, vTb -> hTb', self.W, barvt[:, 1:, :]) + \
+                             torch.einsum('hr, rTb->hTb', self.U, barht[:, :-1, :]))
+
+        std = torch.std(torch.cat([torch.einsum('hv, vb -> hb', self.W, v_data[:, 0, :])[:, None, :]
+                                      ,torch.einsum('hv, vTb -> hTb', self.W, v_data[:, 1:, :]) + \
+                            torch.einsum('hr, rTb->hTb', self.U, r_data[:, :-1, :])], 1), 0)[None, :, :]
+        std[std==0] = 1e-6
+
         Dt = torch.zeros(self.n_hidden, T + 1, v_data.shape[2], dtype=torch.float, device=self.device)
         for t in range(T - 1, 0, -1):
-            Dt[:, t, :] = torch.einsum('hv, hb->vb', self.U, (Dt[:, t + 1, :] * 1 / self.gamma[:, None] + \
+            Dt[:, t, :] = torch.einsum('hv, hb->vb', self.U, (Dt[:, t + 1, :] * 1 / (std[:, t, :] * self.gamma[:, None]) + \
                                                               r_data[:, t, :] - barht[:, t, :]))
 
-        Dt[:, 0, :] = torch.einsum('hv, hb->vb', self.U, (Dt[:, 1, :] * 1 / self.gamma_0[:, None] + \
+        Dt[:, 0, :] = torch.einsum('hv, hb->vb', self.U, (Dt[:, 1, :] * 1 / (std[:, 0, :] * self.gamma_0[:, None]) + \
                                                           r_data[:, 0, :] - barht[:, 0, :]))
-
-        I0_data = torch.einsum('hv, vb -> hb', self.W, v_data[:, 0, :])
-        I0_model = torch.einsum('hv, vb -> hb', self.W, barvt[:, 0, :])
-        I_data = torch.einsum('hv, vTb -> hTb', self.W, v_data[:, 1:, :]) + \
-                 torch.einsum('hr, rTb->hTb', self.U, r_data[:, :-1, :])
-        I_model = torch.einsum('hv, vTb -> hTb', self.W, barvt[:, 1:, :]) + \
-                  torch.einsum('hr, rTb->hTb', self.U, barht[:, :-1, :])
 
         dtheta_0 = torch.mean(-I0_data + I0_model - Dt[:, 1, :], 1) / self.gamma_0
 
@@ -197,16 +197,30 @@ class RTRBM(object):
             torch.einsum('rTb, vTb -> rvb', r_data, v_data) - torch.mean(torch.einsum('rTbk, vTbk -> rvbk', ht_k, vt_k),
                                                                          3), 2)
 
-        dW += torch.mean(torch.einsum('rb, vb -> rvb', Dt[:, 1, :] / self.gamma_0[:, None], v_data[:, 0, :]), 2)
-        dW += torch.mean(torch.einsum('rTb, vTb -> rvb', Dt[:, 2:T, :] / self.gamma[:, None, None], v_data[:, 1:- 1, :]), 2)
-        dU = torch.mean(torch.einsum('rTb, hTb -> rhb', Dt[:, 2:T + 1, :] / self.gamma[:, None, None] + \
+        dW += torch.mean(torch.einsum('rb, vb -> rvb', Dt[:, 1, :] / (std[:, 0, :] * self.gamma_0[:, None]), v_data[:, 0, :]), 2)
+        dW += torch.mean(torch.einsum('rTb, vTb -> rvb', Dt[:, 2:T, :] / (std[:, 1:-1, :] * self.gamma[:, None, None]), v_data[:, 1:- 1, :]), 2)
+        dU = torch.mean(torch.einsum('rTb, hTb -> rhb', Dt[:, 2:T + 1, :] / (std[:, 1:, :] * self.gamma[:, None, None]) + \
                                      r_data[:, 1:T, :] - barht[:, 1:T, :], r_data[:, 0:T - 1, :]), 2)
+
+        if torch.sum(torch.isnan(dtheta_0)) > 0:
+            a = 1
+        if torch.sum(torch.isnan(dgamma_0)) > 0:
+            a = 1
+        if torch.sum(torch.isnan(dgamma)) > 0:
+            a = 1
+        if torch.sum(torch.isnan(db_v)) > 0:
+            a = 1
+        if torch.sum(torch.isnan(dW)) > 0:
+            a = 1
+        if torch.sum(torch.isnan(dU)) > 0:
+            a = 1
+
         return [dW, dU, dtheta, dgamma, db_v, dtheta_0, dgamma_0]
 
     def update_grad(self, lr=1e-3, mom=0, wc=0, sp=None, x=2):
         dW, dU, dtheta, dgamma, db_v, dtheta_0, dgamma_0 = self.dparams
         DW, DU, Dtheta, Dgamma, Db_v, Dtheta_0, Dgamma_0 = self.Dparams
-        DW = mom * DW + lr * (dW - wc * self.W)
+        DW = mom * DW + lr/self.n * (dW - wc * self.W)
         DU = mom * DU + lr * (dU - wc * self.U)
         Dtheta = mom * Dtheta + lr * dtheta
         Dgamma = mom * Dgamma + lr * dgamma
@@ -284,7 +298,7 @@ class RTRBM(object):
 
 
 if __name__ == '__main__':
-    import os
+    import os, sys
 
     # os.chdir(r'D:\OneDrive\RU\Intern\rtrbm_master')
     from data.mock_data import create_BB
@@ -312,7 +326,7 @@ if __name__ == '__main__':
     data = reshape(gaus.data)
     data = reshape(data, T=20, n_batches=1750)
     train, test = data[..., :1400], data[..., 1400:]
-    rtrbm = RTRBM(train, n_hidden=3, device="cuda")
+    rtrbm = RTRBM_G(train, n_hidden=3, device="cuda")
     rtrbm.learn(batch_size=50, n_epochs=500, lr_schedule='geometric_decay', max_lr=1e-4, min_lr=1e-5, start_decay=100,
                 CDk=10, mom=0.6, wc=0, sp=0, x=0)
 
@@ -344,3 +358,5 @@ if __name__ == '__main__':
     ax[1, 3].set_ylim([mini, maxi])
     plt.tight_layout()
     plt.show()
+
+
