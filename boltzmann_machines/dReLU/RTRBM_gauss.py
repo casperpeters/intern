@@ -295,6 +295,56 @@ class RTRBM_G(object):
 
         return vt[:, 1:, :], rt[:, 1:, :]
 
+    def sample(self, v_start, chain=50, pre_gibbs_k=100, gibbs_k=20, mode=1, disable_tqdm=False, num_samples=None):
+        if v_start.ndim == 1:
+            num_samples = 1
+        elif v_start.ndim == 2:
+            num_samples = v_start.shape[1]
+
+        if v_start is None:
+            if num_samples is None:
+                num_samples = 1
+            v_start = torch.randint(0, 2, size=(self.n_visible, num_samples))
+
+        #v_start = v_start.to(self.device)
+        vt = torch.zeros(self.n_visible, chain + 1, num_samples, dtype=torch.float, device=self.device)
+        rt = torch.zeros(self.n_hidden, chain + 1, num_samples, dtype=torch.float, device=self.device)
+
+        vt[:, 0, :] = v_start.detach().clone().to(self.device)
+        I = self.lnorm(torch.einsum('hv, vb->hb', self.W, vt[:, 0, :]))
+        rt[:, 0, :] = (I - self.theta_0[:, None]) / self.gamma_0[:, None]
+
+
+        std = 1 / torch.sqrt(self.gamma[:, None].repeat(1, num_samples))
+        for t in tqdm(range(1, chain + 1), disable=disable_tqdm):
+            v = vt[:, t - 1]
+
+            for kk in range(pre_gibbs_k):
+                I = self.lnorm(torch.einsum('hv, vb->hb', self.W, v) + torch.einsum('hr, rb->hb', self.U, rt[:, t - 1, :]))
+                mean = (I - self.theta[:, None]) / self.gamma[:, None]
+                h = torch.normal(mean=mean, std=std)
+                v = torch.bernoulli(torch.sigmoid(torch.einsum('hv, hb->vb', self.W, h) + self.b_v[:, None]))
+
+            vt_k = torch.zeros(self.n_visible, gibbs_k, num_samples, dtype=torch.float, device=self.device)
+            ht_k = torch.zeros(self.n_hidden, gibbs_k, num_samples, dtype=torch.float, device=self.device)
+            for kk in range(gibbs_k):
+                I = self.lnorm(torch.einsum('hv, vb->hb', self.W, v) + torch.einsum('hr, rb->hb', self.U, rt[:, t - 1, :]))
+                mean = (I - self.theta[:, None]) / self.gamma[:, None]
+                h = torch.normal(mean=mean, std=std)
+                v = torch.bernoulli(torch.sigmoid(torch.einsum('hv, hb->vb', self.W, h) + self.b_v[:, None]))
+                vt_k[:, kk, :] = v.detach().clone()
+                ht_k[:, kk, :] = h.detach().clone()
+
+            if mode == 1:
+                vt[:, t, :] = vt_k[:, -1, :]
+            if mode == 2:
+                vt[:, t, :] = torch.mean(vt_k, 1)
+
+            I = self.lnorm(torch.einsum('hv, vb->hb', self.W, v) + torch.einsum('hr, rb->hb', self.U, rt[:, t - 1, :]))
+            rt[:, t, :] = (I - self.theta[:, None]) / self.gamma[:, None]
+
+        return vt[:, 1:, :], rt[:, 1:, :]
+
 
 
 if __name__ == '__main__':
@@ -327,7 +377,7 @@ if __name__ == '__main__':
     data = reshape(data, T=20, n_batches=1750)
     train, test = data[..., :1400], data[..., 1400:]
     rtrbm = RTRBM_G(train, n_hidden=3, device="cuda")
-    rtrbm.learn(batch_size=50, n_epochs=500, lr_schedule='geometric_decay', max_lr=1e-4, min_lr=1e-5, start_decay=100,
+    rtrbm.learn(batch_size=50, n_epochs=5, lr_schedule='geometric_decay', max_lr=1e-4, min_lr=1e-5, start_decay=100,
                 CDk=10, mom=0.6, wc=0, sp=0, x=0)
 
     r_data = rtrbm._parallel_recurrent_sample_r_given_v(train.to('cuda'))
@@ -340,8 +390,8 @@ if __name__ == '__main__':
     sns.kdeplot(rtrbm.theta.cpu(), ax=ax[1, 1])
     sns.kdeplot(rtrbm.gamma.cpu(), ax=ax[1, 2])
 
-    t = test.shape[1]//2
-    vt_infer, rt_infer = rtrbm.infer(torch.tensor(test[:, :t, :]), t_extra=50)
+    t = test.shape[1]
+    vt_infer, rt_infer = rtrbm.sample(torch.tensor(test[:, 0, :]), chain=t)
     sns.heatmap(vt_infer[..., 0].cpu().detach().numpy(), ax=ax[0, 3], cbar=False)
     ax[0, 3].set_title('Infered data')
     ax[0, 3].set_xlabel('Time')
@@ -354,8 +404,9 @@ if __name__ == '__main__':
     ax[1, 3].plot([0, 1], [0, 1], 'grey', linestyle='dotted', linewidth=1)
     #ax[1, 3].text(.1, .85, '$r_p={:.2f}$'.format(r), fontsize=12)
     ax[1, 3].set_title('$\langle v_i \\rangle$, $r_p={:.2f}$'.format(r))
-    ax[1, 3].set_xlim([mini, maxi])
-    ax[1, 3].set_ylim([mini, maxi])
+    # ax[1, 3].set_xlim([mini, maxi])
+    # ax[1, 3].set_ylim([mini, maxi])
+    #print(torch.sum(torch.isnan(vt_infer)), torch.sum(torch.isinf(vt_infer)), torch.sum(torch.isnan(rt_infer)), torch.sum(torch.isinf(rt_infer)))
     plt.tight_layout()
     plt.show()
 
