@@ -15,7 +15,6 @@ class PoissonTimeShiftedData(object):
 
         """
         """
-
         if 'frequency_range' not in kwargs:
             kwargs['frequency_range'] = [5, 10]
         if 'amplitude_range' not in kwargs:
@@ -62,6 +61,7 @@ class PoissonTimeShiftedData(object):
         population_waves_original = torch.zeros(n_populations, time_steps_per_batch + delay, n_batches)
         population_waves_interact = torch.zeros(n_populations, time_steps_per_batch, n_batches)
         neuron_waves_interact = torch.zeros(neurons_per_population * n_populations, time_steps_per_batch, n_batches)
+        idx = [torch.randperm(neurons_per_population) for _ in range(n_populations)]
 
         # loop over batches
         for batch_index in range(n_batches):
@@ -104,7 +104,7 @@ class PoissonTimeShiftedData(object):
             for h in range(n_populations):
                 neuron_waves_interact[neurons_per_population * h: neurons_per_population * (h + 1), :, batch_index] = \
                     (population_waves_interact[h, :, batch_index]).repeat(neurons_per_population, 1) * \
-                    torch.linspace(kwargs['spread_fr'][0], kwargs['spread_fr'][1], neurons_per_population)[torch.randperm(neurons_per_population), None]
+                    torch.linspace(kwargs['spread_fr'][0], kwargs['spread_fr'][1], neurons_per_population)[idx[h], None]
 
             self.data[..., batch_index] = torch.poisson(neuron_waves_interact[..., batch_index])
 
